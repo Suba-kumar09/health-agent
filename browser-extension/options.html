@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Health Agent - Pairing</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 420px; margin: 2rem auto; }
+    label { display: block; margin-top: 0.75rem; font-size: 0.9rem; }
+    input { width: 100%; padding: 0.4rem; font-size: 1rem; box-sizing: border-box; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; }
+    #status { margin-top: 1rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h2>Pair with your health-agent</h2>
+  <p>
+    Start the agent on this machine, then enter the port and one-time pairing
+    code it printed to its log (or tray notification).
+  </p>
+  <label>Agent port</label>
+  <input id="port" type="number" placeholder="e.g. 53821" />
+  <label>Pairing code</label>
+  <input id="code" type="text" placeholder="6-digit code" maxlength="6" />
+  <button id="pair-btn">Pair</button>
+  <div id="status"></div>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Health Agent - Browser Bridge",
+  "version": "0.1.0",
+  "description": "Sends the active tab URL/title to the local health-agent, mirroring aw-watcher-web.",
+  "permissions": ["tabs", "storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "health-agent-bridge@example.invalid",
+      "strict_min_version": "121.0"
+    }
+  }
+}
