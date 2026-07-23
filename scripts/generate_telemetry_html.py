@@ -151,6 +151,7 @@ function escapeHtml(s) {
 function renderStats() {
   const totalKeys = events.filter(e => e.collector === "input_watcher").reduce((a, e) => a + (e.data.keypress_count || 0), 0);
   const totalClicks = events.filter(e => e.collector === "input_watcher").reduce((a, e) => a + (e.data.click_count || 0), 0);
+  const totalScrolls = events.filter(e => e.collector === "input_watcher").reduce((a, e) => a + (e.data.scroll_count || 0), 0);
   const switches = events.filter(e => e.collector === "window_watcher").length;
   const spanSecs = events.length ? Math.round(events[events.length - 1].ts - events[0].ts) : 0;
   const spanLabel = spanSecs >= 3600 ? `${(spanSecs / 3600).toFixed(1)}h` : spanSecs >= 60 ? `${Math.round(spanSecs / 60)}m` : `${spanSecs}s`;
@@ -160,6 +161,7 @@ function renderStats() {
     ["Span", spanLabel],
     ["Keypresses", totalKeys],
     ["Clicks", totalClicks],
+    ["Scrolls", totalScrolls],
     ["Window switches", switches],
   ];
   document.getElementById("stats").innerHTML = stats.map(([label, num]) =>
