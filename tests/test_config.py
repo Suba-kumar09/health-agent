@@ -7,6 +7,8 @@ def test_default_config_has_sane_values():
     assert cfg.agent.sync_interval_secs == 5400
     assert cfg.privacy.encrypt_at_rest is True
     assert cfg.privacy.json_log_enabled is True
+    assert cfg.reports.enabled is True
+    assert cfg.reports.interval_secs == 15
 
 
 def test_load_example_config(tmp_path):

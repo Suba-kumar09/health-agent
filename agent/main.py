@@ -26,8 +26,9 @@ from agent.consent import (
     resolve_capture_mode,
     run_detailed_consent_flow,
 )
-from agent.crypto import FieldCipher, NullCipher
+from agent.crypto import FieldCipher, NullCipher, get_or_create_fernet_key
 from agent.json_log import JsonEventLogger
+from agent.reports import refresh_reports
 from agent.secrets import SecretStore
 from agent.storage import Event, Storage, run_retention
 from agent.sync.enroll import EnrollmentError, enroll
@@ -55,15 +56,6 @@ class LoggingTransport(httpx.BaseTransport):
         )
         event_ids = [e["event_id"] for e in payload["events"]]
         return httpx.Response(200, json={"accepted": event_ids, "duplicates": []})
-
-
-def get_or_create_fernet_key(secret_store: SecretStore) -> bytes:
-    existing = secret_store.get("data_encryption_key")
-    if existing:
-        return existing.encode("ascii")
-    key = FieldCipher.generate_key()
-    secret_store.set("data_encryption_key", key.decode("ascii"))
-    return key
 
 
 def maybe_enroll(
@@ -126,6 +118,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run the one-time explicit consent flow for detailed capture_mode, then exit",
     )
     parser.add_argument("--no-tray", action="store_true", help="Run without the tray icon (e.g. headless)")
+    parser.add_argument(
+        "--no-reports",
+        action="store_true",
+        help="Don't auto-regenerate telemetry.html/events_export.json while running",
+    )
     parser.add_argument(
         "--enrollment-code",
         default=None,
@@ -334,6 +331,20 @@ def main(argv: list[str] | None = None) -> None:
         "interval",
         seconds=max(config.agent.sync_interval_secs, 3600),
     )
+    if config.reports.enabled and not args.no_reports:
+        html_out = Path(config.reports.html_path)
+        json_out = Path(config.reports.json_path)
+        scheduler.add_job(
+            lambda: refresh_reports(data_dir, html_out, json_out),
+            "interval",
+            seconds=config.reports.interval_secs,
+        )
+        logger.info(
+            "Live reports enabled: %s / %s refreshed every %ds",
+            html_out,
+            json_out,
+            config.reports.interval_secs,
+        )
     scheduler.start()
 
     def handle_signal(signum, frame):

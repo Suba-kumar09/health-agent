@@ -1,14 +1,10 @@
 """Export a data-dir's entire events.db history to a single, plain JSON array.
 
-Decrypts every row (same key the agent itself uses, from the OS keychain /
-fallback file under <data-dir>/secrets) and writes it as one JSON array file --
-the full accumulated history, same data `telemetry.html` is built from, but as
-plain JSON for scripting/external tools instead of a dashboard.
-
-This differs from the live `<data-dir>/events.jsonl` (agent/json_log.py):
-that one only contains events written since json logging was turned on and
-grows automatically as the agent runs; this script re-derives the complete
-history from events.db on demand, any time you run it.
+The running agent already does this itself on a timer (see the `[reports]`
+config section and agent/main.py) as long as it's started without
+`--no-reports`, so you normally don't need to run this manually. This script
+is a one-shot CLI wrapper around `agent.reports.export_json` for ad-hoc use
+(e.g. regenerating after the agent has been stopped).
 
 Usage:
     python scripts/export_readable_json.py --data-dir ./demo_run --out events_export.json
@@ -16,46 +12,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import datetime
-import json
-import sqlite3
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.crypto import FieldCipher
-from agent.main import get_or_create_fernet_key
-from agent.secrets import SecretStore
-
-
-def export(data_dir: Path, out: Path) -> int:
-    """Regenerate `out` from `data_dir`'s full events.db history. Returns event count."""
-    store = SecretStore(fallback_dir=data_dir / "secrets")
-    cipher = FieldCipher(get_or_create_fernet_key(store))
-
-    con = sqlite3.connect(data_dir / "events.db")
-    rows = con.execute(
-        "SELECT event_id, collector, ts, duration, data, synced FROM events ORDER BY ts ASC"
-    ).fetchall()
-    con.close()
-
-    events = []
-    for event_id, collector, ts, duration, raw, synced in rows:
-        events.append(
-            {
-                "event_id": event_id,
-                "collector": collector,
-                "ts": ts,
-                "time": datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S"),
-                "duration": round(duration, 1),
-                "uploaded": bool(synced),
-                "data": cipher.decrypt_json(raw),
-            }
-        )
-
-    Path(out).write_text(json.dumps(events, indent=2), encoding="utf-8")
-    return len(events)
+from agent.reports import export_json
 
 
 def main() -> None:
@@ -64,7 +26,7 @@ def main() -> None:
     parser.add_argument("--out", default="events_export.json")
     args = parser.parse_args()
 
-    count = export(Path(args.data_dir), Path(args.out))
+    count = export_json(Path(args.data_dir), Path(args.out))
     print(f"Wrote {count} events to {args.out}")
 
 

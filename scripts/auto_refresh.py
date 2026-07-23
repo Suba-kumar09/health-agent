@@ -1,5 +1,11 @@
 """Regenerate telemetry.html and events_export.json on a timer while the agent runs.
 
+NOTE: as of the `[reports]` config section, the agent does this itself on a
+timer while it's running (unless started with `--no-reports`), so this script
+is no longer required for the normal workflow. It's kept for cases where you
+want the views refreshed without the agent's own reports job enabled, or want
+to regenerate from a data-dir the agent isn't currently running against.
+
 Run this in a second terminal alongside `python -m agent.main ...` -- it doesn't
 touch the agent or the database, it just re-reads events.db and rewrites both
 output files every `--interval` seconds, so they stay close to live instead of
@@ -17,10 +23,10 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from export_readable_json import export  # noqa: E402
-from generate_telemetry_html import generate  # noqa: E402
+from agent.reports import export_json as export  # noqa: E402
+from agent.reports import generate_html as generate  # noqa: E402
 
 
 def main() -> None:

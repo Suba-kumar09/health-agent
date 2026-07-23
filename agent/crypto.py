@@ -5,6 +5,8 @@ from typing import Any
 
 from cryptography.fernet import Fernet
 
+from agent.secrets import SecretStore
+
 
 class FieldCipher:
     """Encrypts/decrypts the `data` JSON blob column only.
@@ -37,3 +39,12 @@ class NullCipher:
 
     def decrypt_json(self, token: bytes) -> dict[str, Any]:
         return json.loads(token.decode("utf-8"))
+
+
+def get_or_create_fernet_key(secret_store: SecretStore) -> bytes:
+    existing = secret_store.get("data_encryption_key")
+    if existing:
+        return existing.encode("ascii")
+    key = FieldCipher.generate_key()
+    secret_store.set("data_encryption_key", key.decode("ascii"))
+    return key
