@@ -116,7 +116,11 @@ def test_backlog_pacing_caps_batches_per_tick(tmp_path):
     sleeps: list[float] = []
     sync_cfg = SyncSection(max_batches_per_tick=2, batch_max_events=3, gzip=False)
     uploader = make_uploader(
-        storage, httpx.MockTransport(handler), sync_cfg=sync_cfg, sleep_fn=lambda s: sleeps.append(s), inter_batch_delay=5.0
+        storage,
+        httpx.MockTransport(handler),
+        sync_cfg=sync_cfg,
+        sleep_fn=lambda s: sleeps.append(s),
+        inter_batch_delay=5.0,
     )
 
     result = uploader.run_tick()

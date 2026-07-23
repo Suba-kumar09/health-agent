@@ -38,7 +38,8 @@ def test_offline_then_online_drains_backlog_in_paced_batches(tmp_path):
     for i in range(7):
         storage.append(Event(collector="input_watcher", ts=float(i), data={"keypress_count": i}))
 
-    uploader = make_uploader(storage, server, sync_cfg=SyncSection(max_batches_per_tick=5, batch_max_events=3, gzip=True))
+    sync_cfg = SyncSection(max_batches_per_tick=5, batch_max_events=3, gzip=True)
+    uploader = make_uploader(storage, server, sync_cfg=sync_cfg)
     result = uploader.run_tick()
     assert result["sent_batches"] == 0
     assert storage.count_unsynced() == 7
@@ -63,7 +64,8 @@ def test_retry_after_partial_failure_is_idempotent_on_server(tmp_path):
     for i in range(3):
         storage.append(Event(collector="afk", ts=float(i), data={}))
 
-    uploader = make_uploader(storage, server, sync_cfg=SyncSection(max_batches_per_tick=5, batch_max_events=10, gzip=False))
+    sync_cfg = SyncSection(max_batches_per_tick=5, batch_max_events=10, gzip=False)
+    uploader = make_uploader(storage, server, sync_cfg=sync_cfg)
 
     result = uploader.run_tick()
     assert result["sent_batches"] == 1

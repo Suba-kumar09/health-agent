@@ -3,8 +3,7 @@ from __future__ import annotations
 import logging
 import platform as platform_module
 import threading
-import time
-from typing import Callable
+from collections.abc import Callable
 
 from agent.collectors.base import Collector
 from agent.collectors.coalescing import CoalescingStatePoller
@@ -45,9 +44,11 @@ class WindowWatcherCollector(Collector):
                 from agent.platform.macos import get_active_window
                 return get_active_window
             if system == "Linux":
-                from agent.platform.linux import is_wayland, get_active_window
+                from agent.platform.linux import get_active_window, is_wayland
                 if is_wayland():
-                    logger.warning("Wayland session detected -- window_watcher is unavailable (known Phase-1 limitation)")
+                    logger.warning(
+                        "Wayland session detected -- window_watcher is unavailable (known Phase-1 limitation)"
+                    )
                     return None
                 return get_active_window
         except ImportError as exc:

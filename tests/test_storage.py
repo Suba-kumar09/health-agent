@@ -2,8 +2,9 @@ import time
 
 import pytest
 
+from agent.config import RetentionSection
 from agent.crypto import FieldCipher
-from agent.storage import Event, Storage
+from agent.storage import Event, Storage, run_retention
 
 
 @pytest.fixture
@@ -92,3 +93,29 @@ def test_purge_synced_deletes_old_synced_events_only(storage):
 
     assert deleted == 1
     assert storage.count_unsynced() == 1
+
+
+def test_run_retention_delete_after_sync_uses_grace_secs(storage):
+    old = Event(collector="afk", ts=time.time() - 10_000, data={})
+    storage.append(old)
+    storage.assign_batch([old.event_id], "b1")
+    storage.mark_synced([old.event_id])
+
+    cfg = RetentionSection(mode="delete_after_sync", grace_secs=100, keep_days=30)
+    deleted = run_retention(storage, cfg)
+
+    assert deleted == 1
+
+
+def test_run_retention_keep_days_uses_keep_days_not_grace_secs(storage):
+    old = Event(collector="afk", ts=time.time() - 100, data={})
+    storage.append(old)
+    storage.assign_batch([old.event_id], "b1")
+    storage.mark_synced([old.event_id])
+
+    # grace_secs alone would delete this (100s old > 50s grace), but keep_days=30
+    # should protect it since it's nowhere near 30 days old.
+    cfg = RetentionSection(mode="keep_days", grace_secs=50, keep_days=30)
+    deleted = run_retention(storage, cfg)
+
+    assert deleted == 0

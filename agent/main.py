@@ -28,7 +28,8 @@ from agent.consent import (
 )
 from agent.crypto import FieldCipher, NullCipher
 from agent.secrets import SecretStore
-from agent.storage import Event, Storage
+from agent.storage import Event, Storage, run_retention
+from agent.sync.enroll import EnrollmentError, enroll
 from agent.sync.uploader import Uploader
 from agent.tray import TrayController
 
@@ -64,6 +65,42 @@ def get_or_create_fernet_key(secret_store: SecretStore) -> bytes:
     return key
 
 
+def maybe_enroll(
+    secret_store: SecretStore,
+    http_client: httpx.Client,
+    server_url: str,
+    enrollment_code: str | None,
+    device_name: str,
+    os_name: str,
+    os_version: str,
+    device_id: str,
+    device_token: str,
+) -> tuple[str, str]:
+    """Exchange `enrollment_code` for a real device_token if not already enrolled.
+
+    Returns (device_id, device_token), updated on success; unchanged (and logged) on
+    failure or when there's nothing to do -- callers should always continue running
+    with whatever this returns rather than treating enrollment as required.
+    """
+    if device_token != "unenrolled" or not enrollment_code:
+        return device_id, device_token
+    try:
+        resp = enroll(
+            http_client=http_client,
+            server_url=server_url,
+            enrollment_code=enrollment_code,
+            device_name=device_name,
+            os_name=os_name,
+            os_version=os_version,
+        )
+    except EnrollmentError as exc:
+        logger.warning("Enrollment failed (%s) -- continuing unenrolled", exc)
+        return device_id, device_token
+    secret_store.set("device_token", resp.device_token)
+    logger.info("Enrolled successfully (device_id=%s)", resp.device_id)
+    return resp.device_id, resp.device_token
+
+
 def get_or_create_local_device_id(secret_store: SecretStore) -> str:
     existing = secret_store.get("local_device_id")
     if existing:
@@ -88,6 +125,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Run the one-time explicit consent flow for detailed capture_mode, then exit",
     )
     parser.add_argument("--no-tray", action="store_true", help="Run without the tray icon (e.g. headless)")
+    parser.add_argument(
+        "--enrollment-code",
+        default=None,
+        help="One-time code to exchange for a device_token via POST /v1/enroll, if not already enrolled",
+    )
     return parser
 
 
@@ -153,7 +195,9 @@ def main(argv: list[str] | None = None) -> None:
         )
         input_watcher.start()
         collectors.append(input_watcher)
-        logger.info("input_watcher started (capture_mode=%s, bucket_seconds=%d)", capture_mode, config.agent.bucket_seconds)
+        logger.info(
+            "input_watcher started (capture_mode=%s, bucket_seconds=%d)", capture_mode, config.agent.bucket_seconds
+        )
     else:
         logger.info("input_watcher disabled in config")
 
@@ -257,6 +301,18 @@ def main(argv: list[str] | None = None) -> None:
     else:
         http_client = httpx.Client()
 
+    device_id, device_token = maybe_enroll(
+        secret_store=secret_store,
+        http_client=http_client,
+        server_url=config.agent.server_url,
+        enrollment_code=args.enrollment_code,
+        device_name=platform.node(),
+        os_name=platform.system(),
+        os_version=platform.release(),
+        device_id=device_id,
+        device_token=device_token,
+    )
+
     uploader = Uploader(
         storage=storage,
         http_client=http_client,
@@ -271,6 +327,11 @@ def main(argv: list[str] | None = None) -> None:
 
     scheduler = BackgroundScheduler()
     scheduler.add_job(uploader.run_tick, "interval", seconds=config.agent.sync_interval_secs)
+    scheduler.add_job(
+        lambda: run_retention(storage, config.retention),
+        "interval",
+        seconds=max(config.agent.sync_interval_secs, 3600),
+    )
     scheduler.start()
 
     def handle_signal(signum, frame):

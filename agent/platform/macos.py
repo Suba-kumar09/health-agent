@@ -8,8 +8,8 @@ def get_active_window() -> dict | None:
     returns window ownership but the `kCGWindowName` (title) field comes back
     empty on modern macOS -- the app name is still available either way.
     """
-    from AppKit import NSWorkspace
     import Quartz
+    from AppKit import NSWorkspace
 
     active_app = NSWorkspace.sharedWorkspace().frontmostApplication()
     if active_app is None:

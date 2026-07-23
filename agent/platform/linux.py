@@ -16,8 +16,8 @@ def get_active_window() -> dict | None:
     if is_wayland():
         raise RuntimeError("Wayland session detected -- X11 window watcher is unavailable")
 
-    from Xlib import display
     import psutil
+    from Xlib import display
 
     d = display.Display()
     root = d.screen().root
@@ -32,7 +32,10 @@ def get_active_window() -> dict | None:
     window = d.create_resource_object("window", window_id)
 
     title_prop = window.get_full_property(net_wm_name, 0)
-    title = title_prop.value.decode("utf-8") if title_prop and isinstance(title_prop.value, bytes) else title_prop.value if title_prop else None
+    if title_prop and isinstance(title_prop.value, bytes):
+        title = title_prop.value.decode("utf-8")
+    else:
+        title = title_prop.value if title_prop else None
 
     pid_prop = window.get_full_property(net_wm_pid, 0)
     pid = pid_prop.value[0] if pid_prop else None

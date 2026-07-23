@@ -55,11 +55,11 @@ class Config(BaseModel):
     privacy: PrivacySection = Field(default_factory=PrivacySection)
 
     @classmethod
-    def load(cls, path: str | Path) -> "Config":
+    def load(cls, path: str | Path) -> Config:
         with open(path, "rb") as f:
             data = tomllib.load(f)
         return cls.model_validate(data)
 
     @classmethod
-    def default(cls) -> "Config":
+    def default(cls) -> Config:
         return cls()

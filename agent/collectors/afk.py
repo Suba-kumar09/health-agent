@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from agent.collectors.base import Collector
 from agent.collectors.coalescing import CoalescingStatePoller

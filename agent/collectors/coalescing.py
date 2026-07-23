@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Callable, Hashable
+from collections.abc import Callable, Hashable
 
 
 class CoalescingStatePoller:

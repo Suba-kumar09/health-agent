@@ -4,8 +4,9 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from agent.crypto import NullCipher
 
@@ -213,3 +214,18 @@ class Storage:
             )
             self._conn.commit()
             return cur.rowcount
+
+
+def run_retention(storage: Storage, retention_cfg: Any) -> int:
+    """Purge synced rows per `[retention]` config -- `RetentionSection` from agent.config.
+
+    `delete_after_sync`: purge once a row has been synced for `grace_secs` (a short
+    buffer so a row isn't deleted the instant it's confirmed, in case of local
+    debugging/inspection). `keep_days`: purge once a row is older than `keep_days`
+    regardless of how recently it synced.
+    """
+    if retention_cfg.mode == "keep_days":
+        older_than_secs = retention_cfg.keep_days * 86400
+    else:
+        older_than_secs = retention_cfg.grace_secs
+    return storage.purge_synced(older_than_secs=older_than_secs)

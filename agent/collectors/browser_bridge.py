@@ -7,8 +7,8 @@ import secrets
 import string
 import threading
 import time
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
 
 from agent.collectors.base import Collector
 from agent.secrets import SecretStore
