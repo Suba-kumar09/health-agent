@@ -224,13 +224,8 @@ renderLog();
 """
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", default="./demo_run")
-    parser.add_argument("--out", default="telemetry.html")
-    args = parser.parse_args()
-
-    data_dir = Path(args.data_dir)
+def generate(data_dir: Path, out: Path) -> int:
+    """Regenerate `out` from `data_dir`'s full events.db history. Returns row count."""
     store = SecretStore(fallback_dir=data_dir / "secrets")
     cipher = FieldCipher(get_or_create_fernet_key(store))
 
@@ -238,6 +233,7 @@ def main() -> None:
     rows = con.execute(
         "SELECT collector, ts, duration, data FROM events ORDER BY ts ASC"
     ).fetchall()
+    con.close()
 
     events = []
     for collector, ts, duration, raw in rows:
@@ -261,8 +257,18 @@ def main() -> None:
     )
     html = html.replace("__DATA_DIR__", f"data-dir: {data_dir}")
 
-    Path(args.out).write_text(html, encoding="utf-8")
-    print(f"Wrote {len(events)} rows to {args.out}")
+    Path(out).write_text(html, encoding="utf-8")
+    return len(events)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", default="./demo_run")
+    parser.add_argument("--out", default="telemetry.html")
+    args = parser.parse_args()
+
+    count = generate(Path(args.data_dir), Path(args.out))
+    print(f"Wrote {count} rows to {args.out}")
 
 
 if __name__ == "__main__":

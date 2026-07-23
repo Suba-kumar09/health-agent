@@ -29,13 +29,8 @@ from agent.main import get_or_create_fernet_key
 from agent.secrets import SecretStore
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data-dir", default="./demo_run")
-    parser.add_argument("--out", default="events_export.json")
-    args = parser.parse_args()
-
-    data_dir = Path(args.data_dir)
+def export(data_dir: Path, out: Path) -> int:
+    """Regenerate `out` from `data_dir`'s full events.db history. Returns event count."""
     store = SecretStore(fallback_dir=data_dir / "secrets")
     cipher = FieldCipher(get_or_create_fernet_key(store))
 
@@ -43,6 +38,7 @@ def main() -> None:
     rows = con.execute(
         "SELECT event_id, collector, ts, duration, data, synced FROM events ORDER BY ts ASC"
     ).fetchall()
+    con.close()
 
     events = []
     for event_id, collector, ts, duration, raw, synced in rows:
@@ -58,8 +54,18 @@ def main() -> None:
             }
         )
 
-    Path(args.out).write_text(json.dumps(events, indent=2), encoding="utf-8")
-    print(f"Wrote {len(events)} events to {args.out}")
+    Path(out).write_text(json.dumps(events, indent=2), encoding="utf-8")
+    return len(events)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", default="./demo_run")
+    parser.add_argument("--out", default="events_export.json")
+    args = parser.parse_args()
+
+    count = export(Path(args.data_dir), Path(args.out))
+    print(f"Wrote {count} events to {args.out}")
 
 
 if __name__ == "__main__":
