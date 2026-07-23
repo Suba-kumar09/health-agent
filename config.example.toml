@@ -28,3 +28,4 @@ browser_bridge = true
 [privacy]
 encrypt_at_rest = true
 afk_threshold_secs = 120
+json_log_enabled = true             # also mirror every event to events.jsonl, unencrypted -- see .gitignore

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.crypto import NullCipher
+from agent.json_log import JsonEventLogger
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -63,9 +64,15 @@ class Storage:
     through `_lock`.
     """
 
-    def __init__(self, db_path: str | Path, cipher: Any | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        cipher: Any | None = None,
+        json_logger: JsonEventLogger | None = None,
+    ) -> None:
         self._path = Path(db_path)
         self._cipher = cipher or NullCipher()
+        self._json_logger = json_logger
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self._path, check_same_thread=False)
         with self._lock:
@@ -87,8 +94,11 @@ class Storage:
                 (event.event_id, event.collector, event.ts, event.duration, blob, int(event.synced), event.batch_id),
             )
             self._conn.commit()
+        if self._json_logger is not None:
+            self._json_logger.append(event)
 
     def append_many(self, events: Iterable[Event]) -> None:
+        events = list(events)
         rows = [
             (
                 e.event_id,
@@ -108,6 +118,9 @@ class Storage:
                 rows,
             )
             self._conn.commit()
+        if self._json_logger is not None:
+            for e in events:
+                self._json_logger.append(e)
 
     def _row_to_event(self, row: tuple) -> Event:
         event_id, collector, ts, duration, blob, synced, batch_id = row

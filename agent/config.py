@@ -45,6 +45,7 @@ class CollectorsSection(BaseModel):
 class PrivacySection(BaseModel):
     encrypt_at_rest: bool = True
     afk_threshold_secs: int = 120
+    json_log_enabled: bool = True
 
 
 class Config(BaseModel):

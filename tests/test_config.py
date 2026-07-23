@@ -6,6 +6,7 @@ def test_default_config_has_sane_values():
     assert cfg.agent.capture_mode == "aggregate"
     assert cfg.agent.sync_interval_secs == 5400
     assert cfg.privacy.encrypt_at_rest is True
+    assert cfg.privacy.json_log_enabled is True
 
 
 def test_load_example_config(tmp_path):

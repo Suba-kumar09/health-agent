@@ -27,6 +27,7 @@ from agent.consent import (
     run_detailed_consent_flow,
 )
 from agent.crypto import FieldCipher, NullCipher
+from agent.json_log import JsonEventLogger
 from agent.secrets import SecretStore
 from agent.storage import Event, Storage, run_retention
 from agent.sync.enroll import EnrollmentError, enroll
@@ -172,7 +173,8 @@ def main(argv: list[str] | None = None) -> None:
     device_token = secret_store.get("device_token") or "unenrolled"  # real /v1/enroll flow: later milestone
 
     cipher = FieldCipher(get_or_create_fernet_key(secret_store)) if config.privacy.encrypt_at_rest else NullCipher()
-    storage = Storage(data_dir / "events.db", cipher=cipher)
+    json_logger = JsonEventLogger(data_dir / "events.jsonl") if config.privacy.json_log_enabled else None
+    storage = Storage(data_dir / "events.db", cipher=cipher, json_logger=json_logger)
 
     collectors = []
     input_watcher = None
