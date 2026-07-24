@@ -1,9 +1,11 @@
+import json
 import time
 
 import pytest
 
 from agent.config import RetentionSection
 from agent.crypto import FieldCipher
+from agent.json_log import JsonEventLogger
 from agent.storage import Event, Storage, run_retention
 
 
@@ -13,6 +15,47 @@ def storage(tmp_path):
     s = Storage(tmp_path / "events.db", cipher=cipher)
     yield s
     s.close()
+
+
+def test_append_mirrors_to_json_logger_when_configured(tmp_path):
+    cipher = FieldCipher(FieldCipher.generate_key())
+    json_path = tmp_path / "events.jsonl"
+    s = Storage(tmp_path / "events.db", cipher=cipher, json_logger=JsonEventLogger(json_path))
+
+    e = Event(collector="input_watcher", ts=1.0, duration=30.0, data={"keypress_count": 7})
+    s.append(e)
+    s.close()
+
+    lines = json_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record["data"] == {"keypress_count": 7}  # plain, not encrypted
+
+
+def test_append_many_mirrors_all_events_to_json_logger(tmp_path):
+    cipher = FieldCipher(FieldCipher.generate_key())
+    json_path = tmp_path / "events.jsonl"
+    s = Storage(tmp_path / "events.db", cipher=cipher, json_logger=JsonEventLogger(json_path))
+
+    events = [
+        Event(collector="afk", ts=1.0, data={"state": "active"}),
+        Event(collector="afk", ts=2.0, data={"state": "afk"}),
+    ]
+    s.append_many(events)
+    s.close()
+
+    lines = json_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+
+
+def test_append_without_json_logger_does_not_write_json(tmp_path):
+    cipher = FieldCipher(FieldCipher.generate_key())
+    s = Storage(tmp_path / "events.db", cipher=cipher)  # no json_logger passed
+
+    s.append(Event(collector="afk", ts=1.0, data={"state": "active"}))
+    s.close()
+
+    assert not (tmp_path / "events.jsonl").exists()
 
 
 def test_append_and_read_back_decrypts(storage):

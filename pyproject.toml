@@ -47,4 +47,4 @@ select = ["E", "F", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 # Contains a large embedded HTML/CSS/JS template string, not Python line-length rules.
-"scripts/generate_telemetry_html.py" = ["E501"]
+"agent/reports.py" = ["E501"]

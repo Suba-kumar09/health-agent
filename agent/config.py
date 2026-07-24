@@ -45,6 +45,14 @@ class CollectorsSection(BaseModel):
 class PrivacySection(BaseModel):
     encrypt_at_rest: bool = True
     afk_threshold_secs: int = 120
+    json_log_enabled: bool = True
+
+
+class ReportsSection(BaseModel):
+    enabled: bool = True
+    html_path: str = "telemetry.html"
+    json_path: str = "events_export.json"
+    interval_secs: int = 15
 
 
 class Config(BaseModel):
@@ -53,6 +61,7 @@ class Config(BaseModel):
     retention: RetentionSection = Field(default_factory=RetentionSection)
     collectors: CollectorsSection = Field(default_factory=CollectorsSection)
     privacy: PrivacySection = Field(default_factory=PrivacySection)
+    reports: ReportsSection = Field(default_factory=ReportsSection)
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
