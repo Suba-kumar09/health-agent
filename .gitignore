@@ -19,6 +19,8 @@ detailed_mode_audit.log
 telemetry.html
 events_export.json
 events_readable.csv
+events.json
+events_check*.csv
 demo_run/
 *.log
 pid.txt
