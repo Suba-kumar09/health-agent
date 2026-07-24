@@ -1,24 +1,26 @@
-"""Run the agent in-process, then regenerate telemetry.html + events.json when it exits.
+"""Run the agent in-process, then force one final report refresh when it exits.
 
 Calls agent.main.main() directly (same argv handling as `python -m agent.main`,
 so --data-dir, --dry-run, --no-tray etc. all work as usual) wrapped in a
-try/finally. agent.main already installs its own SIGINT/SIGTERM handler and
-exits its loop cleanly on Ctrl+C or tray "Stop agent" -- running it in-process
-(rather than as a subprocess) means that same Ctrl+C also unwinds this
-wrapper's try/finally, so telemetry.html and events.json always get
-regenerated against the same --data-dir right after a session ends, instead
-of going stale until someone remembers to run the export scripts by hand.
+try/finally. The agent already refreshes telemetry.html + events_export.json
+live every `reports.interval_secs` while running (see the `[reports]` config
+section and agent/main.py) unless started with --no-reports, so this wrapper's
+only job is to guarantee one last refresh right at shutdown -- covering
+whatever happened in the gap since the last scheduled tick, or providing a
+refresh at all if the agent was run with --no-reports.
 
 Usage:
     python scripts/run_with_report.py --dry-run --data-dir ./demo_run --no-tray
 """
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
-import agent.main
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import agent.main  # noqa: E402
+from agent.reports import refresh_reports  # noqa: E402
 
 
 def _data_dir_from_args(args: list[str]) -> str:
@@ -32,22 +34,12 @@ def _data_dir_from_args(args: list[str]) -> str:
 
 def main() -> None:
     args = sys.argv[1:]
-    data_dir = _data_dir_from_args(args)
+    data_dir = Path(_data_dir_from_args(args))
 
     try:
         agent.main.main(args)
     finally:
-        scripts_dir = Path(__file__).parent
-        subprocess.run(
-            [sys.executable, str(scripts_dir / "generate_telemetry_html.py"),
-             "--data-dir", data_dir, "--out", "telemetry.html"],
-            check=True,
-        )
-        subprocess.run(
-            [sys.executable, str(scripts_dir / "export_json.py"),
-             "--data-dir", data_dir, "--out", "events.json"],
-            check=True,
-        )
+        refresh_reports(data_dir, Path("telemetry.html"), Path("events_export.json"))
 
 
 if __name__ == "__main__":
