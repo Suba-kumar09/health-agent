@@ -1,9 +1,9 @@
 # Ingest API contract
 
-Phase 1 scope: the agent implements the client side of this contract in full
-(`agent/sync/uploader.py`, `agent/sync/api.py`, `agent/sync/enroll.py`).
-The server side is out of scope for Phase 1 -- this document is what a later
-phase's ingest service needs to implement to be compatible.
+The agent implements the client side of this contract in full
+(`agent/sync/uploader.py`, `agent/sync/api.py`, `agent/sync/enroll.py`). A
+reference server implementation now lives in `server/` (FastAPI + Postgres,
+see `server/main.py`), covering both endpoints below.
 
 ## POST /v1/ingest
 
@@ -43,6 +43,14 @@ Body:
 | 413 | -- | Batch too large. Client currently backs off; a future client revision could shrink `batch_max_events`/`batch_max_bytes` in response. |
 | 429 | `{"retry_after": <seconds>}` | Client blocks all uploads until `retry_after` elapses (takes precedence over the exponential backoff curve). |
 
+Server implementation: `server/routes/ingest.py`. Dedup is enforced durably
+via a unique constraint on `event_id` (`server/db.py`'s
+`insert_ignore_conflict`), not just in-memory, so a server restart between
+"accepted" and the client marking rows synced is safe. Rate limiting is a
+per-device fixed window (`server/ratelimit.py`), and the size limit (413) and
+gzip decompression are handled by `server/middleware.py` before the request
+reaches the route.
+
 ### Idempotency
 
 The client persists `batch_id` on every event row in that batch *before*
@@ -63,16 +71,24 @@ the server has no other way to know a retry is "the same" data.
 - `afk`: `{state: "active" | "afk"}` (also heartbeat-extended)
 - `browser_bridge`: `{url, title}`
 
-## POST /v1/enroll (contract only, server deferred)
+## POST /v1/enroll
 
 ```
 Body:    {"enrollment_code": "...", "device_name": "...", "os": "...", "os_version": "..."}
 Response 200: {"device_id": "...", "device_token": "..."}
+Response 403: enrollment code missing, already used, or expired
 ```
 
 Client implementation: `agent.sync.enroll.enroll()`. The returned
 `device_token` is persisted via `agent.secrets.SecretStore` (OS keychain,
 with an encrypted-file fallback when no keychain backend is available).
+
+Server implementation: `server/routes/enroll.py` + `server/auth.py`.
+Enrollment codes are minted out-of-band via `python -m server.admin_cli
+mint-code` (there's no dashboard or user-account system in this phase) --
+each code is single-use and expires after `ENROLLMENT_CODE_TTL_HOURS`
+(default 36h). On success the server stores only a sha256 hash of the
+device token, never the plaintext.
 
 ---
 
