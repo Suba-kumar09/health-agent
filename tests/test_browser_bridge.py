@@ -111,6 +111,33 @@ def test_tab_event_with_valid_token_dispatches_to_callback(bridge):
     assert bridge.events == [{"url": "https://example.com", "title": "Example", "ts": 1.0}]
 
 
+def test_options_preflight_from_extension_origin_succeeds(bridge):
+    """A real browser's fetch() with a JSON body triggers this CORS preflight
+    before the actual POST -- curl/httpx (used by every other test here) don't
+    enforce CORS, so this is the one path that catches a browser blocking the
+    request even when the server-side pairing logic itself is correct."""
+    resp = httpx.request("OPTIONS", f"{base_url(bridge)}/pair", headers={"Origin": EXT_ORIGIN})
+
+    assert resp.status_code == 204
+    assert resp.headers["access-control-allow-origin"] == EXT_ORIGIN
+    assert resp.headers["access-control-allow-methods"] == "POST"
+
+
+def test_options_preflight_rejected_from_non_extension_origin(bridge):
+    resp = httpx.request("OPTIONS", f"{base_url(bridge)}/pair", headers={"Origin": "https://evil.example"})
+
+    assert resp.status_code == 403
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_pair_response_includes_cors_header_for_extension_origin(bridge):
+    code = bridge.issue_pairing_code()
+
+    resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+
+    assert resp.headers["access-control-allow-origin"] == EXT_ORIGIN
+
+
 def test_tab_event_rejected_from_non_extension_origin_even_with_valid_token(bridge):
     code = bridge.issue_pairing_code()
     pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
