@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.crypto import FieldCipher
-from agent.main import get_or_create_fernet_key
+from agent.config import Config
+from agent.crypto import cipher_for_config
 from agent.secrets import SecretStore
 
 
@@ -27,11 +27,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", default="./demo_run")
     parser.add_argument("--out", default="events_readable.csv")
+    parser.add_argument("--config", default="config.toml", help="Path to config.toml used by the agent run")
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
+    config_path = Path(args.config)
+    config = Config.load(config_path) if config_path.exists() else Config.default()
     store = SecretStore(fallback_dir=data_dir / "secrets")
-    cipher = FieldCipher(get_or_create_fernet_key(store))
+    cipher = cipher_for_config(config, store)
 
     con = sqlite3.connect(data_dir / "events.db")
     rows = con.execute(

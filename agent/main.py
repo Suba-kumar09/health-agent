@@ -26,7 +26,7 @@ from agent.consent import (
     resolve_capture_mode,
     run_detailed_consent_flow,
 )
-from agent.crypto import FieldCipher, NullCipher, get_or_create_fernet_key
+from agent.crypto import cipher_for_config
 from agent.json_log import JsonEventLogger
 from agent.reports import refresh_reports
 from agent.secrets import SecretStore
@@ -169,7 +169,7 @@ def main(argv: list[str] | None = None) -> None:
     device_id = config.agent.device_id or get_or_create_local_device_id(secret_store)
     device_token = secret_store.get("device_token") or "unenrolled"  # real /v1/enroll flow: later milestone
 
-    cipher = FieldCipher(get_or_create_fernet_key(secret_store)) if config.privacy.encrypt_at_rest else NullCipher()
+    cipher = cipher_for_config(config, secret_store)
     json_logger = JsonEventLogger(data_dir / "events.jsonl") if config.privacy.json_log_enabled else None
     storage = Storage(data_dir / "events.db", cipher=cipher, json_logger=json_logger)
 
@@ -335,7 +335,7 @@ def main(argv: list[str] | None = None) -> None:
         html_out = Path(config.reports.html_path)
         json_out = Path(config.reports.json_path)
         scheduler.add_job(
-            lambda: refresh_reports(data_dir, html_out, json_out),
+            lambda: refresh_reports(data_dir, html_out, json_out, config),
             "interval",
             seconds=config.reports.interval_secs,
         )

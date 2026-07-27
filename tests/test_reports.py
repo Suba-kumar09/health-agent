@@ -3,7 +3,8 @@ import json
 import pytest
 from keyring.errors import KeyringError
 
-from agent.crypto import FieldCipher, get_or_create_fernet_key
+from agent.config import Config
+from agent.crypto import FieldCipher, NullCipher, get_or_create_fernet_key
 from agent.reports import export_json, generate_html, refresh_reports
 from agent.secrets import SecretStore
 from agent.storage import Event, Storage
@@ -82,6 +83,32 @@ def test_refresh_reports_writes_both_files(tmp_path):
 
     assert html_out.exists()
     assert json_out.exists()
+
+
+def test_generate_html_and_export_json_work_with_encrypt_at_rest_disabled(tmp_path):
+    """Regression test: rows written with NullCipher (encrypt_at_rest=false) must not
+    make the reports job crash by assuming they're Fernet-encrypted."""
+    config = Config.default()
+    config.privacy.encrypt_at_rest = False
+
+    storage = Storage(tmp_path / "events.db", cipher=NullCipher())
+    storage.append(
+        Event(
+            collector="input_watcher",
+            ts=1000.0,
+            duration=30.0,
+            data={"active_secs": 20, "keypress_count": 5, "click_count": 2, "scroll_count": 1, "mouse_dist_px": 10.0},
+        )
+    )
+    storage.close()
+
+    html_out = tmp_path / "telemetry.html"
+    json_out = tmp_path / "events_export.json"
+
+    assert generate_html(tmp_path, html_out, config) == 1
+    assert export_json(tmp_path, json_out, config) == 1
+    events = json.loads(json_out.read_text(encoding="utf-8"))
+    assert events[0]["data"]["keypress_count"] == 5
 
 
 def test_regenerating_after_more_events_grows_the_report(tmp_path):

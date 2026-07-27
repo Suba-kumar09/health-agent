@@ -16,7 +16,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from agent.crypto import FieldCipher, get_or_create_fernet_key
+from agent.config import Config
+from agent.crypto import cipher_for_config
 from agent.secrets import SecretStore
 
 TEMPLATE = """<title>Session Telemetry — health-agent</title>
@@ -218,10 +219,10 @@ renderLog();
 """
 
 
-def generate_html(data_dir: Path, out: Path) -> int:
+def generate_html(data_dir: Path, out: Path, config: Config | None = None) -> int:
     """Regenerate `out` from `data_dir`'s full events.db history. Returns row count."""
     store = SecretStore(fallback_dir=data_dir / "secrets")
-    cipher = FieldCipher(get_or_create_fernet_key(store))
+    cipher = cipher_for_config(config or Config.default(), store)
 
     con = sqlite3.connect(data_dir / "events.db")
     rows = con.execute("SELECT collector, ts, duration, data FROM events ORDER BY ts ASC").fetchall()
@@ -253,10 +254,10 @@ def generate_html(data_dir: Path, out: Path) -> int:
     return len(events)
 
 
-def export_json(data_dir: Path, out: Path) -> int:
+def export_json(data_dir: Path, out: Path, config: Config | None = None) -> int:
     """Regenerate `out` from `data_dir`'s full events.db history. Returns event count."""
     store = SecretStore(fallback_dir=data_dir / "secrets")
-    cipher = FieldCipher(get_or_create_fernet_key(store))
+    cipher = cipher_for_config(config or Config.default(), store)
 
     con = sqlite3.connect(data_dir / "events.db")
     rows = con.execute(
@@ -282,7 +283,7 @@ def export_json(data_dir: Path, out: Path) -> int:
     return len(events)
 
 
-def refresh_reports(data_dir: Path, html_out: Path, json_out: Path) -> None:
+def refresh_reports(data_dir: Path, html_out: Path, json_out: Path, config: Config | None = None) -> None:
     """Regenerate both telemetry.html and events_export.json in one call."""
-    generate_html(data_dir, html_out)
-    export_json(data_dir, json_out)
+    generate_html(data_dir, html_out, config)
+    export_json(data_dir, json_out, config)
