@@ -324,6 +324,11 @@ def main(argv: list[str] | None = None) -> None:
         token_provider=lambda: device_token,
     )
 
+    if config.retention.mode == "keep_days":
+        logger.info("Retention mode=keep_days (keep_days=%d; grace_secs ignored)", config.retention.keep_days)
+    else:
+        logger.info("Retention mode=delete_after_sync (grace_secs=%d; keep_days ignored)", config.retention.grace_secs)
+
     scheduler = BackgroundScheduler()
     scheduler.add_job(uploader.run_tick, "interval", seconds=config.agent.sync_interval_secs)
     scheduler.add_job(
@@ -340,10 +345,11 @@ def main(argv: list[str] | None = None) -> None:
             seconds=config.reports.interval_secs,
         )
         logger.info(
-            "Live reports enabled: %s / %s refreshed every %ds",
+            "Live reports enabled: %s / %s refreshed every %ds (window_days=%d)",
             html_out,
             json_out,
             config.reports.interval_secs,
+            config.reports.window_days,
         )
     scheduler.start()
 

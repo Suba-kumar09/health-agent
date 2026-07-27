@@ -15,6 +15,10 @@ backoff_initial_secs = 5
 backoff_max_secs = 900
 
 [retention]
+# mode selects exactly one purge strategy -- the other key below is ignored
+# (the agent logs which one at startup):
+#   "delete_after_sync": purge a row `grace_secs` after it's confirmed synced
+#   "keep_days": purge any row older than `keep_days`, regardless of sync state
 mode = "delete_after_sync"          # "delete_after_sync" | "keep_days"
 grace_secs = 3600
 keep_days = 30
@@ -35,3 +39,4 @@ enabled = true                      # keep telemetry.html/events_export.json ref
 html_path = "telemetry.html"
 json_path = "events_export.json"
 interval_secs = 15
+window_days = 7                     # live view only covers the last N days; use scripts/*.py --since/--until for full history

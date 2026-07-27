@@ -53,6 +53,7 @@ class ReportsSection(BaseModel):
     html_path: str = "telemetry.html"
     json_path: str = "events_export.json"
     interval_secs: int = 15
+    window_days: int = 7
 
 
 class Config(BaseModel):
