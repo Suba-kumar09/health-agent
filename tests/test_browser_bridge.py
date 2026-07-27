@@ -162,6 +162,44 @@ def test_unpair_then_repair_issues_a_working_token(bridge):
     assert resp.status_code == 200
 
 
+def test_unpair_endpoint_requires_valid_token(bridge):
+    resp = httpx.post(
+        f"{base_url(bridge)}/unpair",
+        headers={"Origin": EXT_ORIGIN, "Authorization": "Bearer wrong-token"},
+    )
+
+    assert resp.status_code == 401
+
+
+def test_unpair_endpoint_invalidates_token_and_requires_origin(bridge):
+    code = bridge.issue_pairing_code()
+    pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+    token = pair_resp.json()["token"]
+
+    # Wrong origin, even with a valid token -- still rejected (independent layers).
+    bad_origin_resp = httpx.post(
+        f"{base_url(bridge)}/unpair",
+        headers={"Origin": "https://evil.example", "Authorization": f"Bearer {token}"},
+    )
+    assert bad_origin_resp.status_code == 403
+    assert bridge.paired_token == token  # unchanged -- the bad-origin call must not have run
+
+    resp = httpx.post(
+        f"{base_url(bridge)}/unpair",
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert bridge.paired_token is None
+
+    # The now-invalidated token must be rejected on /tab-event.
+    tab_event_resp = httpx.post(
+        f"{base_url(bridge)}/tab-event",
+        json={"url": "https://example.com", "title": "Example", "ts": 1.0},
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {token}"},
+    )
+    assert tab_event_resp.status_code == 401
+
+
 def test_tab_event_rejected_from_non_extension_origin_even_with_valid_token(bridge):
     code = bridge.issue_pairing_code()
     pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})

@@ -148,6 +148,18 @@ class BrowserBridgeCollector(Collector):
                     self._send_json(200, {"ok": True})
                     return
 
+                if self.path == "/unpair":
+                    # Requires the current token, same as /tab-event -- an unauthenticated
+                    # caller (or an unrelated web page) must not be able to force an unpair.
+                    auth = self.headers.get("Authorization", "")
+                    expected = collector.paired_token
+                    if not expected or not secrets.compare_digest(auth, f"Bearer {expected}"):
+                        self._send_json(401, {"error": "auth_failed"})
+                        return
+                    collector.unpair()
+                    self._send_json(200, {"ok": True})
+                    return
+
                 self._send_json(404, {"error": "not_found"})
 
         self._server = ThreadingHTTPServer((self.host, self.requested_port), Handler)

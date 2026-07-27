@@ -106,3 +106,25 @@ Response 200: {"ok": true}
 Response 401: {"error": "auth_failed"}
 Response 403: {"error": "origin_not_allowed"}
 ```
+
+The extension applies privacy filtering (query-string stripping, a domain denylist,
+incognito exclusion, and a whole-bridge on/off toggle -- see `browser-extension/options.html`)
+*before* sending, entirely client-side; the agent has no visibility into filtered-out tabs.
+It also retries failed sends from a small size-capped local queue and skips sending when the
+url+title are unchanged from the last successfully sent event.
+
+### POST /unpair
+
+```
+Headers: Authorization: Bearer <current token>
+Response 200: {"ok": true}
+Response 401: {"error": "auth_failed"}
+Response 403: {"error": "origin_not_allowed"}
+```
+
+Invalidates the current bearer token (same effect as the tray's "Unpair" menu item) --
+requires the current token, so an unauthenticated caller can't force an unpair. After this,
+`/tab-event` returns 401 until a new pairing code is issued and the extension re-pairs.
+The extension's options page calls this (best-effort) when its own "Unpair" button is
+clicked, and always clears its local `bridgePort`/`bridgeToken` regardless of whether the
+agent was reachable to confirm it.
