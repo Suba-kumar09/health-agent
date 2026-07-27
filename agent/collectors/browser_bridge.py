@@ -73,6 +73,15 @@ class BrowserBridgeCollector(Collector):
         logger.info("Browser extension pairing code: %s (expires in %ds)", self._pairing_code, PAIRING_CODE_TTL_SECS)
         return self._pairing_code
 
+    def unpair(self) -> None:
+        """Clears the paired bearer token, invalidating any already-paired extension
+
+        installs -- they'll get 401s on /tab-event until a new pairing code is
+        issued and the extension re-pairs.
+        """
+        self.secret_store.delete("browser_bridge_token")
+        logger.info("Browser extension unpaired -- previous token invalidated")
+
     def _consume_pairing_code(self, code: str) -> bool:
         if self._pairing_code is None or self.now_fn() > self._pairing_expires_at:
             return False
@@ -127,7 +136,7 @@ class BrowserBridgeCollector(Collector):
                 if self.path == "/tab-event":
                     auth = self.headers.get("Authorization", "")
                     expected = collector.paired_token
-                    if not expected or auth != f"Bearer {expected}":
+                    if not expected or not secrets.compare_digest(auth, f"Bearer {expected}"):
                         self._send_json(401, {"error": "auth_failed"})
                         return
                     try:

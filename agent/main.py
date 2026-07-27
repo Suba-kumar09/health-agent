@@ -247,6 +247,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         logger.info("afk disabled in config")
 
+    browser_bridge = None
     if config.collectors.browser_bridge:
         def on_tab_event(data: dict) -> None:
             event = Event(
@@ -284,6 +285,13 @@ def main(argv: list[str] | None = None) -> None:
     def stop_from_tray() -> None:
         stop_event.set()
 
+    def pair_from_tray() -> tuple[int | None, str]:
+        code = browser_bridge.issue_pairing_code()
+        return browser_bridge.port, code
+
+    def unpair_from_tray() -> None:
+        browser_bridge.unpair()
+
     tray = None
     if not args.no_tray:
         tray = TrayController(
@@ -291,6 +299,8 @@ def main(argv: list[str] | None = None) -> None:
             on_resume=resume_collectors,
             on_stop=stop_from_tray,
             capture_mode=capture_mode,
+            on_pair=pair_from_tray if browser_bridge is not None else None,
+            on_unpair=unpair_from_tray if browser_bridge is not None else None,
         )
         tray.start()
 

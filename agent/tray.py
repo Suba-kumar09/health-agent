@@ -20,11 +20,16 @@ class TrayController:
         on_resume: Callable[[], None],
         on_stop: Callable[[], None],
         capture_mode: str,
+        on_pair: Callable[[], tuple[int | None, str]] | None = None,
+        on_unpair: Callable[[], None] | None = None,
     ) -> None:
         self.on_pause = on_pause
         self.on_resume = on_resume
         self.on_stop = on_stop
         self.capture_mode = capture_mode
+        # None when browser_bridge is disabled in config -- no pairing menu items then.
+        self.on_pair = on_pair
+        self.on_unpair = on_unpair
         self.paused = False
         self._icon = None
         self._thread: threading.Thread | None = None
@@ -56,11 +61,32 @@ class TrayController:
             self.on_stop()
             icon.stop()
 
-        menu = pystray.Menu(
+        def pair(icon, item):
+            port, code = self.on_pair()
+            message = f"Port {port}, code {code} (valid 5 min) -- enter these in the extension's options page."
+            try:
+                icon.notify(message, "Pair browser extension")
+            except NotImplementedError:  # pragma: no cover - not every backend supports notify()
+                pass  # already logged at INFO by issue_pairing_code()
+
+        def unpair(icon, item):
+            self.on_unpair()
+            try:
+                icon.notify("Browser extension unpaired.", "Health Agent")
+            except NotImplementedError:  # pragma: no cover - not every backend supports notify()
+                pass
+
+        menu_items = [
             pystray.MenuItem(lambda item: "Resume" if self.paused else "Pause", toggle_pause),
             pystray.MenuItem(f"Capture mode: {self.capture_mode}", None, enabled=False),
-            pystray.MenuItem("Stop agent", stop),
-        )
+        ]
+        if self.on_pair is not None:
+            menu_items.append(pystray.MenuItem("Pair browser extension...", pair))
+        if self.on_unpair is not None:
+            menu_items.append(pystray.MenuItem("Unpair", unpair))
+        menu_items.append(pystray.MenuItem("Stop agent", stop))
+
+        menu = pystray.Menu(*menu_items)
         return pystray.Icon("health-agent", self._image_running, "Health Agent", menu)
 
     def start(self) -> None:

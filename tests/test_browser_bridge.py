@@ -111,6 +111,57 @@ def test_tab_event_with_valid_token_dispatches_to_callback(bridge):
     assert bridge.events == [{"url": "https://example.com", "title": "Example", "ts": 1.0}]
 
 
+def test_reissuing_pairing_code_invalidates_the_previous_one(bridge):
+    """issue_pairing_code() is callable on demand (not just at start()) -- this is
+    what the tray's "Pair browser extension..." menu item calls."""
+    old_code = bridge.issue_pairing_code()
+    new_code = bridge.issue_pairing_code()
+
+    assert new_code != old_code
+
+    old_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": old_code}, headers={"Origin": EXT_ORIGIN})
+    assert old_resp.status_code == 401
+
+    new_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": new_code}, headers={"Origin": EXT_ORIGIN})
+    assert new_resp.status_code == 200
+
+
+def test_unpair_invalidates_the_current_token(bridge):
+    code = bridge.issue_pairing_code()
+    pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+    token = pair_resp.json()["token"]
+
+    bridge.unpair()
+
+    assert bridge.paired_token is None
+    resp = httpx.post(
+        f"{base_url(bridge)}/tab-event",
+        json={"url": "https://example.com", "title": "Example", "ts": 1.0},
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 401
+    assert bridge.events == []
+
+
+def test_unpair_then_repair_issues_a_working_token(bridge):
+    code = bridge.issue_pairing_code()
+    httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+
+    bridge.unpair()
+
+    new_code = bridge.issue_pairing_code()
+    pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": new_code}, headers={"Origin": EXT_ORIGIN})
+    assert pair_resp.status_code == 200
+    new_token = pair_resp.json()["token"]
+
+    resp = httpx.post(
+        f"{base_url(bridge)}/tab-event",
+        json={"url": "https://example.com", "title": "Example", "ts": 1.0},
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {new_token}"},
+    )
+    assert resp.status_code == 200
+
+
 def test_tab_event_rejected_from_non_extension_origin_even_with_valid_token(bridge):
     code = bridge.issue_pairing_code()
     pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
