@@ -22,11 +22,13 @@ from agent.collectors.window_watcher import WindowWatcherCollector
 from agent.config import Config
 from agent.consent import (
     ConsentManager,
+    console_available,
     ensure_first_run_consent,
+    native_dialog_prompt,
     resolve_capture_mode,
     run_detailed_consent_flow,
 )
-from agent.crypto import FieldCipher, NullCipher, get_or_create_fernet_key
+from agent.crypto import cipher_for_config
 from agent.json_log import JsonEventLogger
 from agent.reports import refresh_reports
 from agent.secrets import SecretStore
@@ -144,13 +146,16 @@ def main(argv: list[str] | None = None) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     consent = ConsentManager(data_dir)
+    # input() blocks forever with no attached console (e.g. the windowed PyInstaller
+    # build) -- fall back to a native dialog in that case instead of hanging silently.
+    prompt_fn = input if console_available() else native_dialog_prompt
 
     if args.enable_detailed_consent:
-        granted = run_detailed_consent_flow(consent, prompt_fn=input)
+        granted = run_detailed_consent_flow(consent, prompt_fn=prompt_fn)
         logger.info("Detailed-mode consent %s", "granted" if granted else "declined")
         return
 
-    if not ensure_first_run_consent(consent, prompt_fn=input):
+    if not ensure_first_run_consent(consent, prompt_fn=prompt_fn):
         logger.warning("Monitoring consent declined -- exiting without starting any collector")
         return
 
@@ -169,7 +174,7 @@ def main(argv: list[str] | None = None) -> None:
     device_id = config.agent.device_id or get_or_create_local_device_id(secret_store)
     device_token = secret_store.get("device_token") or "unenrolled"  # real /v1/enroll flow: later milestone
 
-    cipher = FieldCipher(get_or_create_fernet_key(secret_store)) if config.privacy.encrypt_at_rest else NullCipher()
+    cipher = cipher_for_config(config, secret_store)
     json_logger = JsonEventLogger(data_dir / "events.jsonl") if config.privacy.json_log_enabled else None
     storage = Storage(data_dir / "events.db", cipher=cipher, json_logger=json_logger)
 
@@ -247,6 +252,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         logger.info("afk disabled in config")
 
+    browser_bridge = None
     if config.collectors.browser_bridge:
         def on_tab_event(data: dict) -> None:
             event = Event(
@@ -284,6 +290,13 @@ def main(argv: list[str] | None = None) -> None:
     def stop_from_tray() -> None:
         stop_event.set()
 
+    def pair_from_tray() -> tuple[int | None, str]:
+        code = browser_bridge.issue_pairing_code()
+        return browser_bridge.port, code
+
+    def unpair_from_tray() -> None:
+        browser_bridge.unpair()
+
     tray = None
     if not args.no_tray:
         tray = TrayController(
@@ -291,6 +304,8 @@ def main(argv: list[str] | None = None) -> None:
             on_resume=resume_collectors,
             on_stop=stop_from_tray,
             capture_mode=capture_mode,
+            on_pair=pair_from_tray if browser_bridge is not None else None,
+            on_unpair=unpair_from_tray if browser_bridge is not None else None,
         )
         tray.start()
 
@@ -324,6 +339,11 @@ def main(argv: list[str] | None = None) -> None:
         token_provider=lambda: device_token,
     )
 
+    if config.retention.mode == "keep_days":
+        logger.info("Retention mode=keep_days (keep_days=%d; grace_secs ignored)", config.retention.keep_days)
+    else:
+        logger.info("Retention mode=delete_after_sync (grace_secs=%d; keep_days ignored)", config.retention.grace_secs)
+
     scheduler = BackgroundScheduler()
     scheduler.add_job(uploader.run_tick, "interval", seconds=config.agent.sync_interval_secs)
     scheduler.add_job(
@@ -335,15 +355,16 @@ def main(argv: list[str] | None = None) -> None:
         html_out = Path(config.reports.html_path)
         json_out = Path(config.reports.json_path)
         scheduler.add_job(
-            lambda: refresh_reports(data_dir, html_out, json_out),
+            lambda: refresh_reports(data_dir, html_out, json_out, config),
             "interval",
             seconds=config.reports.interval_secs,
         )
         logger.info(
-            "Live reports enabled: %s / %s refreshed every %ds",
+            "Live reports enabled: %s / %s refreshed every %ds (window_days=%d)",
             html_out,
             json_out,
             config.reports.interval_secs,
+            config.reports.window_days,
         )
     scheduler.start()
 

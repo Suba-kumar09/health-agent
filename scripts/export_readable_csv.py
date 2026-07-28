@@ -1,53 +1,52 @@
 """Export a data-dir's events.db to a plain, human-readable CSV for manual inspection.
 
-Decrypts the `data` column using the same key the agent itself uses (from the
-OS keychain / fallback file under <data-dir>/secrets), so this only works
-against a data-dir produced by this same machine's agent runs.
+The running agent's live reports job only ever shows the last `[reports] window_days`
+of history; this is a thin one-shot CLI wrapper around `agent.reports.export_csv` for
+ad-hoc full-history (or custom date-range) exports.
 
 Usage:
     python scripts/export_readable_csv.py --data-dir ./demo_run --out events_readable.csv
+    python scripts/export_readable_csv.py --data-dir ./demo_run --out last_week.csv --since 2026-07-20
 """
 from __future__ import annotations
 
 import argparse
-import csv
 import datetime
-import sqlite3
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.crypto import FieldCipher
-from agent.main import get_or_create_fernet_key
-from agent.secrets import SecretStore
+from agent.config import Config
+from agent.reports import export_csv
+
+
+def _parse_ts(value: str | None) -> float | None:
+    if value is None:
+        return None
+    return datetime.datetime.fromisoformat(value).timestamp()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", default="./demo_run")
     parser.add_argument("--out", default="events_readable.csv")
+    parser.add_argument("--config", default="config.toml", help="Path to config.toml used by the agent run")
+    parser.add_argument("--since", default=None, help="ISO date/datetime, e.g. 2026-07-20 -- omit for full history")
+    parser.add_argument("--until", default=None, help="ISO date/datetime, e.g. 2026-07-27 -- omit for full history")
     args = parser.parse_args()
 
-    data_dir = Path(args.data_dir)
-    store = SecretStore(fallback_dir=data_dir / "secrets")
-    cipher = FieldCipher(get_or_create_fernet_key(store))
+    config_path = Path(args.config)
+    config = Config.load(config_path) if config_path.exists() else Config.default()
 
-    con = sqlite3.connect(data_dir / "events.db")
-    rows = con.execute(
-        "SELECT collector, ts, duration, data, synced FROM events ORDER BY ts ASC"
-    ).fetchall()
-
-    with open(args.out, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["time", "collector", "duration_secs", "uploaded", "details"])
-        for collector, ts, duration, raw, synced in rows:
-            decrypted = cipher.decrypt_json(raw)
-            t = datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
-            details = ", ".join(f"{k}={v}" for k, v in decrypted.items())
-            writer.writerow([t, collector, f"{duration:.1f}", "yes" if synced else "no", details])
-
-    print(f"Wrote {len(rows)} rows to {args.out}")
+    count = export_csv(
+        Path(args.data_dir),
+        Path(args.out),
+        config,
+        since=_parse_ts(args.since),
+        until=_parse_ts(args.until),
+    )
+    print(f"Wrote {count} rows to {args.out}")
 
 
 if __name__ == "__main__":

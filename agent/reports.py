@@ -11,13 +11,33 @@ thin one-shot CLI wrappers around the same functions.
 """
 from __future__ import annotations
 
+import csv
 import datetime
 import json
 import sqlite3
+import time
 from pathlib import Path
 
-from agent.crypto import FieldCipher, get_or_create_fernet_key
+from agent.config import Config
+from agent.crypto import cipher_for_config
 from agent.secrets import SecretStore
+
+
+def _time_filter_sql(since: float | None, until: float | None) -> tuple[str, list[float]]:
+    """Builds an optional `WHERE ts >= ? AND ts <= ?` clause for a `since`/`until` window.
+
+    Returns ("", []) when both are None, so callers get the same unbounded query as
+    before when no window is requested (one-shot CLI use, or a caller with no config).
+    """
+    clauses = []
+    params: list[float] = []
+    if since is not None:
+        clauses.append("ts >= ?")
+        params.append(since)
+    if until is not None:
+        clauses.append("ts <= ?")
+        params.append(until)
+    return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 
 TEMPLATE = """<title>Session Telemetry — health-agent</title>
 <style>
@@ -218,13 +238,27 @@ renderLog();
 """
 
 
-def generate_html(data_dir: Path, out: Path) -> int:
-    """Regenerate `out` from `data_dir`'s full events.db history. Returns row count."""
+def generate_html(
+    data_dir: Path,
+    out: Path,
+    config: Config | None = None,
+    since: float | None = None,
+    until: float | None = None,
+) -> int:
+    """Regenerate `out` from `data_dir`'s events.db history. Returns row count.
+
+    With `since`/`until` left as None (the default for direct/CLI calls), the full
+    history is used, same as before. `refresh_reports` passes an automatic `since`
+    for the recurring in-process job -- see its docstring.
+    """
     store = SecretStore(fallback_dir=data_dir / "secrets")
-    cipher = FieldCipher(get_or_create_fernet_key(store))
+    cipher = cipher_for_config(config or Config.default(), store)
 
     con = sqlite3.connect(data_dir / "events.db")
-    rows = con.execute("SELECT collector, ts, duration, data FROM events ORDER BY ts ASC").fetchall()
+    where_sql, params = _time_filter_sql(since, until)
+    rows = con.execute(
+        f"SELECT collector, ts, duration, data FROM events{where_sql} ORDER BY ts ASC", params
+    ).fetchall()
     con.close()
 
     events = []
@@ -253,14 +287,25 @@ def generate_html(data_dir: Path, out: Path) -> int:
     return len(events)
 
 
-def export_json(data_dir: Path, out: Path) -> int:
-    """Regenerate `out` from `data_dir`'s full events.db history. Returns event count."""
+def export_json(
+    data_dir: Path,
+    out: Path,
+    config: Config | None = None,
+    since: float | None = None,
+    until: float | None = None,
+) -> int:
+    """Regenerate `out` from `data_dir`'s events.db history. Returns event count.
+
+    See `generate_html` for the `since`/`until` behavior.
+    """
     store = SecretStore(fallback_dir=data_dir / "secrets")
-    cipher = FieldCipher(get_or_create_fernet_key(store))
+    cipher = cipher_for_config(config or Config.default(), store)
 
     con = sqlite3.connect(data_dir / "events.db")
+    where_sql, params = _time_filter_sql(since, until)
     rows = con.execute(
-        "SELECT event_id, collector, ts, duration, data, synced FROM events ORDER BY ts ASC"
+        f"SELECT event_id, collector, ts, duration, data, synced FROM events{where_sql} ORDER BY ts ASC",
+        params,
     ).fetchall()
     con.close()
 
@@ -282,7 +327,51 @@ def export_json(data_dir: Path, out: Path) -> int:
     return len(events)
 
 
-def refresh_reports(data_dir: Path, html_out: Path, json_out: Path) -> None:
-    """Regenerate both telemetry.html and events_export.json in one call."""
-    generate_html(data_dir, html_out)
-    export_json(data_dir, json_out)
+def export_csv(
+    data_dir: Path,
+    out: Path,
+    config: Config | None = None,
+    since: float | None = None,
+    until: float | None = None,
+) -> int:
+    """Regenerate `out` (a human-readable CSV) from `data_dir`'s events.db history.
+
+    Returns row count. See `generate_html` for the `since`/`until` behavior. Used by
+    `scripts/export_readable_csv.py` so that script no longer duplicates its own
+    decrypt/read loop.
+    """
+    store = SecretStore(fallback_dir=data_dir / "secrets")
+    cipher = cipher_for_config(config or Config.default(), store)
+
+    con = sqlite3.connect(data_dir / "events.db")
+    where_sql, params = _time_filter_sql(since, until)
+    rows = con.execute(
+        f"SELECT collector, ts, duration, data, synced FROM events{where_sql} ORDER BY ts ASC",
+        params,
+    ).fetchall()
+    con.close()
+
+    with open(out, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["time", "collector", "duration_secs", "uploaded", "details"])
+        for collector, ts, duration, raw, synced in rows:
+            decrypted = cipher.decrypt_json(raw)
+            t = datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+            details = ", ".join(f"{k}={v}" for k, v in decrypted.items())
+            writer.writerow([t, collector, f"{duration:.1f}", "yes" if synced else "no", details])
+
+    return len(rows)
+
+
+def refresh_reports(data_dir: Path, html_out: Path, json_out: Path, config: Config | None = None) -> None:
+    """Regenerate both telemetry.html and events_export.json in one call.
+
+    Bounds the recurring in-process refresh to the last `config.reports.window_days`
+    (default 7) so it doesn't reload the agent's entire history on every tick; direct/
+    CLI calls to generate_html/export_json are unaffected since they default to
+    since=None (full history) unless the caller passes its own bound.
+    """
+    cfg = config or Config.default()
+    since = time.time() - cfg.reports.window_days * 86400
+    generate_html(data_dir, html_out, cfg, since=since)
+    export_json(data_dir, json_out, cfg, since=since)

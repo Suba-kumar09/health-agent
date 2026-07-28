@@ -3,8 +3,10 @@ import json
 import pytest
 from keyring.errors import KeyringError
 
-from agent.crypto import FieldCipher, get_or_create_fernet_key
-from agent.reports import export_json, generate_html, refresh_reports
+import agent.reports as reports_module
+from agent.config import Config
+from agent.crypto import FieldCipher, NullCipher, get_or_create_fernet_key
+from agent.reports import export_csv, export_json, generate_html, refresh_reports
 from agent.secrets import SecretStore
 from agent.storage import Event, Storage
 
@@ -82,6 +84,82 @@ def test_refresh_reports_writes_both_files(tmp_path):
 
     assert html_out.exists()
     assert json_out.exists()
+
+
+def test_generate_html_and_export_json_work_with_encrypt_at_rest_disabled(tmp_path):
+    """Regression test: rows written with NullCipher (encrypt_at_rest=false) must not
+    make the reports job crash by assuming they're Fernet-encrypted."""
+    config = Config.default()
+    config.privacy.encrypt_at_rest = False
+
+    storage = Storage(tmp_path / "events.db", cipher=NullCipher())
+    storage.append(
+        Event(
+            collector="input_watcher",
+            ts=1000.0,
+            duration=30.0,
+            data={"active_secs": 20, "keypress_count": 5, "click_count": 2, "scroll_count": 1, "mouse_dist_px": 10.0},
+        )
+    )
+    storage.close()
+
+    html_out = tmp_path / "telemetry.html"
+    json_out = tmp_path / "events_export.json"
+
+    assert generate_html(tmp_path, html_out, config) == 1
+    assert export_json(tmp_path, json_out, config) == 1
+    events = json.loads(json_out.read_text(encoding="utf-8"))
+    assert events[0]["data"]["keypress_count"] == 5
+
+
+def test_export_json_since_until_bound_results(tmp_path):
+    _seed(tmp_path)  # events at ts=1000.0 (input_watcher) and ts=1030.0 (window_watcher)
+    out = tmp_path / "events_export.json"
+
+    count = export_json(tmp_path, out, since=1020.0)
+    assert count == 1
+    events = json.loads(out.read_text(encoding="utf-8"))
+    assert events[0]["collector"] == "window_watcher"
+
+    count = export_json(tmp_path, out, until=1010.0)
+    assert count == 1
+    events = json.loads(out.read_text(encoding="utf-8"))
+    assert events[0]["collector"] == "input_watcher"
+
+
+def test_export_csv_writes_decrypted_history(tmp_path):
+    _seed(tmp_path)
+    out = tmp_path / "events.csv"
+
+    count = export_csv(tmp_path, out)
+
+    assert count == 2
+    text = out.read_text(encoding="utf-8")
+    assert "keypress_count=5" in text
+    assert "app=Code" in text
+
+
+def test_refresh_reports_bounds_to_window_days(tmp_path, monkeypatch):
+    """The recurring job path must only show the last window_days -- old rows outside
+    that window are excluded, unlike a direct/CLI call to export_json/generate_html."""
+    store = SecretStore(fallback_dir=tmp_path / "secrets")
+    cipher = FieldCipher(get_or_create_fernet_key(store))
+    storage = Storage(tmp_path / "events.db", cipher=cipher)
+    storage.append(Event(collector="afk", ts=1000.0, duration=1.0, data={"state": "active"}))
+    storage.append(Event(collector="afk", ts=699000.0, duration=1.0, data={"state": "idle"}))
+    storage.close()
+
+    monkeypatch.setattr(reports_module.time, "time", lambda: 700000.0)
+
+    config = Config.default()
+    config.reports.window_days = 7  # since = 700000 - 7*86400 = 95200 -> excludes ts=1000
+
+    json_out = tmp_path / "events_export.json"
+    refresh_reports(tmp_path, tmp_path / "telemetry.html", json_out, config)
+
+    events = json.loads(json_out.read_text(encoding="utf-8"))
+    assert len(events) == 1
+    assert events[0]["data"]["state"] == "idle"
 
 
 def test_regenerating_after_more_events_grows_the_report(tmp_path):

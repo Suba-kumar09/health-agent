@@ -37,9 +37,10 @@ python -m agent.main --enable-detailed-consent --data-dir ./demo_run
 
 # Build a standalone Windows exe (PyInstaller)
 pyinstaller health-agent.spec
-```
 
-There is no lint/format tooling configured in this repo — don't invent a lint command.
+# Lint (also run in CI)
+ruff check .
+```
 
 Because collector threads write to the local SQLite buffer, avoid running two `agent.main`
 instances against the same `--data-dir` at once (WAL mode tolerates concurrent readers, not
@@ -156,9 +157,11 @@ as optional UI chrome.
 
 MV3, dual Chrome/Firefox support via `browser_specific_settings.gecko` in `manifest.json` (uses
 the `chrome.*` namespace, which Firefox also implements under MV3). `options.js` is the pairing
-UI: takes the port + 6-digit code shown in the agent's log/tray, POSTs to `/pair`, stores the
-returned token. `background.js` listens on `chrome.tabs.onActivated`/`onUpdated` and POSTs
-`{url, title, ts}` to `/tab-event` with the stored bearer token.
+UI: takes the port + 6-digit code shown in the agent's log, or reissued on demand via the tray's
+"Pair browser extension..." menu item ("Unpair" clears the stored token), POSTs to `/pair`,
+stores the returned token.
+`background.js` listens on `chrome.tabs.onActivated`/`onUpdated` and POSTs `{url, title, ts}` to
+`/tab-event` with the stored bearer token.
 
 ## Testing conventions
 

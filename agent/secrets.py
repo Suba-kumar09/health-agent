@@ -6,7 +6,7 @@ import stat
 from pathlib import Path
 
 import keyring
-from keyring.errors import KeyringError
+from keyring.errors import KeyringError, PasswordDeleteError
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,20 @@ class SecretStore:
                 )
                 self._use_fallback = True
         self._set_fallback(key, value)
+
+    def delete(self, key: str) -> None:
+        """Removes a stored secret, if present. Safe to call when nothing is stored
+        under `key` -- used by unpair() to invalidate a bearer token."""
+        if not self._use_fallback:
+            try:
+                keyring.delete_password(SERVICE_NAME, key)
+                return
+            except PasswordDeleteError:
+                return  # nothing was stored under this key
+            except KeyringError:
+                logger.warning("Keyring unavailable, falling back to file storage for delete of %r", key)
+                self._use_fallback = True
+        self._fallback_path(key).unlink(missing_ok=True)
 
     def _fallback_path(self, key: str) -> Path:
         safe_key = "".join(c if c.isalnum() else "_" for c in key)
