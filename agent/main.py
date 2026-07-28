@@ -90,6 +90,12 @@ def maybe_enroll(
         logger.warning("Enrollment failed (%s) -- continuing unenrolled", exc)
         return device_id, device_token
     secret_store.set("device_token", resp.device_token)
+    # get_or_create_local_device_id() reads this back on every future run, before
+    # maybe_enroll() ever runs -- without persisting it here, the next restart pairs
+    # the real (persisted) device_token with a stale local device_id, and the server's
+    # payload.device_id != device.device_id check (server/routes/ingest.py) 401s every
+    # upload from then on.
+    secret_store.set("local_device_id", resp.device_id)
     logger.info("Enrolled successfully (device_id=%s)", resp.device_id)
     return resp.device_id, resp.device_token
 
