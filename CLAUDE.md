@@ -157,8 +157,9 @@ as optional UI chrome.
 
 MV3, dual Chrome/Firefox support via `browser_specific_settings.gecko` in `manifest.json` (uses
 the `chrome.*` namespace, which Firefox also implements under MV3). `options.js` is the pairing
-UI: takes the port + 6-digit code shown in the agent's log (log only for now — issued once at
-startup, no tray display or re-issue/unpair yet), POSTs to `/pair`, stores the returned token.
+UI: takes the port + 6-digit code shown in the agent's log, or reissued on demand via the tray's
+"Pair browser extension..." menu item ("Unpair" clears the stored token), POSTs to `/pair`,
+stores the returned token.
 `background.js` listens on `chrome.tabs.onActivated`/`onUpdated` and POSTs `{url, title, ts}` to
 `/tab-event` with the stored bearer token.
 
