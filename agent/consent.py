@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -74,6 +75,40 @@ def resolve_capture_mode(requested_mode: str, consent: ConsentManager) -> str:
     if requested_mode == "detailed" and not consent.has_detailed_consent():
         return "aggregate"
     return requested_mode
+
+
+def console_available() -> bool:
+    """True if stdin is a real interactive terminal that input() can safely block on.
+
+    PyInstaller's windowed (console=False) build has no attached console, so sys.stdin
+    is None -- calling input() there blocks forever on a prompt nobody can see or
+    answer. Callers should use native_dialog_prompt instead when this is False.
+    """
+    return sys.stdin is not None and sys.stdin.isatty()
+
+
+def native_dialog_prompt(text: str) -> str:
+    """Fallback prompt_fn for when there's no console (see console_available).
+
+    Shows a native Yes/No message box on Windows and returns "y"/"n" to match
+    input()'s contract for ensure_first_run_consent/run_detailed_consent_flow.
+    """
+    if sys.platform == "win32":
+        import ctypes
+
+        MB_YESNO = 0x00000004
+        MB_ICONQUESTION = 0x00000020
+        MB_TOPMOST = 0x00040000
+        IDYES = 6
+        result = ctypes.windll.user32.MessageBoxW(
+            None, text, "Health Agent - Consent Required", MB_YESNO | MB_ICONQUESTION | MB_TOPMOST
+        )
+        return "y" if result == IDYES else "n"
+    raise RuntimeError(
+        "No console available to prompt for consent, and no GUI fallback implemented for "
+        "this platform yet. Run once from a console build (e.g. health-agent.exe, not the "
+        "windowed build) to grant consent first, or run with --no-tray from a terminal."
+    )
 
 
 def ensure_first_run_consent(consent: ConsentManager, prompt_fn: Callable[[str], str]) -> bool:

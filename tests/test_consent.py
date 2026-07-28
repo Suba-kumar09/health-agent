@@ -1,6 +1,12 @@
+import sys
+
+import pytest
+
 from agent.consent import (
     ConsentManager,
+    console_available,
     ensure_first_run_consent,
+    native_dialog_prompt,
     resolve_capture_mode,
     run_detailed_consent_flow,
 )
@@ -67,3 +73,35 @@ def test_audit_log_written_when_detailed_active(tmp_path):
     content = (tmp_path / "detailed_mode_audit.log").read_text(encoding="utf-8")
     assert "12345.0" in content
     assert "detailed_mode_active" in content
+
+
+class _FakeStdin:
+    def __init__(self, is_tty: bool) -> None:
+        self._is_tty = is_tty
+
+    def isatty(self) -> bool:
+        return self._is_tty
+
+
+def test_console_available_false_when_stdin_is_none(monkeypatch):
+    monkeypatch.setattr(sys, "stdin", None)
+    assert console_available() is False
+
+
+def test_console_available_false_when_stdin_is_not_a_tty(monkeypatch):
+    # PyInstaller's windowed build's redirected/null stdin isn't interactive.
+    monkeypatch.setattr(sys, "stdin", _FakeStdin(is_tty=False))
+    assert console_available() is False
+
+
+def test_console_available_true_for_a_real_terminal(monkeypatch):
+    monkeypatch.setattr(sys, "stdin", _FakeStdin(is_tty=True))
+    assert console_available() is True
+
+
+def test_native_dialog_prompt_raises_clearly_with_no_gui_fallback(monkeypatch):
+    # Non-Windows platforms have no GUI fallback implemented yet -- this must fail
+    # loudly (a clear error) rather than silently hang like a bare input() would.
+    monkeypatch.setattr(sys, "platform", "linux")
+    with pytest.raises(RuntimeError, match="No console available"):
+        native_dialog_prompt("Continue? [y/N]: ")

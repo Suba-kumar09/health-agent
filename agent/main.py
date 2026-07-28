@@ -22,7 +22,9 @@ from agent.collectors.window_watcher import WindowWatcherCollector
 from agent.config import Config
 from agent.consent import (
     ConsentManager,
+    console_available,
     ensure_first_run_consent,
+    native_dialog_prompt,
     resolve_capture_mode,
     run_detailed_consent_flow,
 )
@@ -144,13 +146,16 @@ def main(argv: list[str] | None = None) -> None:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     consent = ConsentManager(data_dir)
+    # input() blocks forever with no attached console (e.g. the windowed PyInstaller
+    # build) -- fall back to a native dialog in that case instead of hanging silently.
+    prompt_fn = input if console_available() else native_dialog_prompt
 
     if args.enable_detailed_consent:
-        granted = run_detailed_consent_flow(consent, prompt_fn=input)
+        granted = run_detailed_consent_flow(consent, prompt_fn=prompt_fn)
         logger.info("Detailed-mode consent %s", "granted" if granted else "declined")
         return
 
-    if not ensure_first_run_consent(consent, prompt_fn=input):
+    if not ensure_first_run_consent(consent, prompt_fn=prompt_fn):
         logger.warning("Monitoring consent declined -- exiting without starting any collector")
         return
 
