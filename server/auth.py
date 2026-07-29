@@ -59,7 +59,16 @@ def enroll_device(
     expired.
     """
     now = time.time()
-    row = session.execute(select(EnrollmentCode).where(EnrollmentCode.code == enrollment_code)).scalar_one_or_none()
+    # with_for_update() closes a TOCTOU race: without it, two concurrent
+    # requests for the same code can both read used_at=None before either
+    # commits and both mint a device, breaking the single-use guarantee.
+    # Mirrors the same lock-then-check pattern in ratelimit.check_and_increment.
+    row = (
+        session.execute(
+            select(EnrollmentCode).where(EnrollmentCode.code == enrollment_code).with_for_update()
+        )
+        .scalar_one_or_none()
+    )
 
     if row is None:
         raise EnrollmentError("unknown enrollment code")

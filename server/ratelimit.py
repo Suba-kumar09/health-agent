@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from server.models import RateLimitCounter
@@ -36,8 +37,22 @@ def check_and_increment(
     )
 
     if row is None:
-        session.add(RateLimitCounter(device_id=device_id, window_start=now, count_in_window=1))
-        return RateLimitResult(allowed=True)
+        # Two concurrent first-ever requests from the same device can both
+        # reach here before either commits and race to insert the same PK.
+        # Fall back to a locked re-fetch on conflict instead of surfacing a
+        # raw 500 from the duplicate insert.
+        try:
+            session.add(RateLimitCounter(device_id=device_id, window_start=now, count_in_window=1))
+            session.flush()
+            return RateLimitResult(allowed=True)
+        except IntegrityError:
+            session.rollback()
+            row = (
+                session.execute(
+                    select(RateLimitCounter).where(RateLimitCounter.device_id == device_id).with_for_update()
+                )
+                .scalar_one()
+            )
 
     window_elapsed = now - row.window_start
     if window_elapsed >= window_secs:

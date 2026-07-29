@@ -7,9 +7,39 @@ size limit.
 """
 from __future__ import annotations
 
-import gzip
+import zlib
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+_GZIP_WBITS = zlib.MAX_WBITS | 16
+
+
+class _GzipTooLarge(Exception):
+    """Raised when decompressed output would exceed the configured cap."""
+
+
+def _decompress_gzip_bounded(data: bytes, max_bytes: int) -> bytes:
+    """Streaming gzip decompression that aborts once the output would exceed
+    max_bytes, instead of gzip.decompress()'s single unbounded call.
+
+    The Content-Length check only bounds the *compressed* size -- a small
+    gzip payload can still expand far past that (a zip bomb) and blow up
+    memory before a one-shot decompress() call would even return. Raises
+    _GzipTooLarge if the limit is exceeded, or zlib.error if malformed.
+    """
+    decompressor = zlib.decompressobj(_GZIP_WBITS)
+    out = bytearray()
+    chunk = decompressor.decompress(data, max_bytes + 1)
+    out += chunk
+    while decompressor.unconsumed_tail and len(out) <= max_bytes:
+        chunk = decompressor.decompress(decompressor.unconsumed_tail, max_bytes + 1 - len(out))
+        out += chunk
+    if len(out) > max_bytes:
+        raise _GzipTooLarge
+    out += decompressor.flush()
+    if len(out) > max_bytes:
+        raise _GzipTooLarge
+    return bytes(out)
 
 
 class GzipAndSizeLimitMiddleware:
@@ -38,10 +68,18 @@ class GzipAndSizeLimitMiddleware:
             message = await receive()
             body += message.get("body", b"")
             more_body = message.get("more_body", False)
+            if len(body) > self.max_body_bytes:
+                # Covers the case where Content-Length was absent (chunked
+                # transfer) so the check above never ran.
+                await _send_413(send)
+                return
 
         try:
-            decompressed = gzip.decompress(body)
-        except OSError:
+            decompressed = _decompress_gzip_bounded(body, self.max_body_bytes)
+        except _GzipTooLarge:
+            await _send_413(send)
+            return
+        except zlib.error:
             # Malformed gzip: pass an empty body through and let the route's
             # own JSON validation produce the error, rather than this
             # middleware guessing at the right status code.
