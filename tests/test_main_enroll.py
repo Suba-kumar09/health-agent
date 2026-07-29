@@ -82,6 +82,11 @@ def test_maybe_enroll_success_updates_ids_and_persists_token(tmp_path, monkeypat
     assert device_id == "server-issued-id"
     assert device_token == "real-token"
     assert store.get("device_token") == "real-token"
+    # Regression guard: get_or_create_local_device_id() reads this back on the
+    # *next* run, before maybe_enroll() runs again. If this isn't persisted, the
+    # next restart pairs the (already-persisted) real token with this stale
+    # pre-enrollment id, and the server 401s every upload from then on.
+    assert store.get("local_device_id") == "server-issued-id"
 
 
 def test_maybe_enroll_failure_keeps_unenrolled(tmp_path, monkeypatch):
