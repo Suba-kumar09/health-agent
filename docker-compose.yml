@@ -2,15 +2,17 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: health_agent
-      POSTGRES_USER: health_agent
-      POSTGRES_PASSWORD: health_agent
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-health_agent}
+      POSTGRES_USER: ${POSTGRES_USER:-health_agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    # No `ports:` mapping on purpose -- Postgres should only be reachable from
+    # the `server` container over the internal compose network (as `db`), not
+    # from the host's public interface. Use `docker compose exec db psql ...`
+    # for ad-hoc admin access instead of exposing 5432.
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U health_agent"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-health_agent}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -18,8 +20,12 @@ services:
   server:
     build: .
     environment:
-      DATABASE_URL: postgresql+psycopg://health_agent:health_agent@db:5432/health_agent
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-health_agent}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-health_agent}
     ports:
+      # Exposed on the host's public interface for direct plain-HTTP testing.
+      # TEMPORARY: tokens and event data travel in cleartext this way. Before
+      # using this with real devices/data, switch to "127.0.0.1:8000:8000"
+      # and put a TLS-terminating reverse proxy (nginx/Caddy) on 443 in front.
       - "8000:8000"
     depends_on:
       db:

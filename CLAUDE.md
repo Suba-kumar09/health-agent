@@ -4,14 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Phase 1 of a cross-platform health-monitoring end-device agent. It runs in the background on a
-user's machine, passively observes keyboard/mouse intensity, the foreground app/window, and
-(via a companion browser extension) the active browser tab, buffers everything locally in
-SQLite, and periodically batch-uploads it to a not-yet-built ingest server. Offline-first by
-design: the agent must keep working and buffering with no network, and must never lose or
-duplicate events when connectivity returns.
+Phase 1 of a cross-platform health-monitoring system, in two halves that live in the same repo:
 
-Windows is the primary/validated target. macOS and Linux platform backends
+- **`agent/`** — a background end-device agent. It runs on a user's machine, passively
+  observes keyboard/mouse intensity, the foreground app/window, and (via a companion browser
+  extension) the active browser tab, buffers everything locally in SQLite, and periodically
+  batch-uploads it to the ingest server. Offline-first by design: the agent must keep working
+  and buffering with no network, and must never lose or duplicate events when connectivity
+  returns.
+- **`server/`** — the FastAPI ingest server the agent uploads to: device enrollment
+  (`/v1/enroll`), event ingest (`/v1/ingest`), Postgres-backed in production (SQLite for
+  local dev/CI), migrated via Alembic.
+
+Windows is the primary/validated target for the agent. macOS and Linux platform backends
 (`agent/platform/macos.py`, `agent/platform/linux.py`) are written per the same interface but
 unverified — there is no machine to test them on in this environment.
 
@@ -21,12 +26,19 @@ unverified — there is no machine to test them on in this environment.
 # Activate the venv (already created at .venv)
 .venv\Scripts\Activate.ps1
 
+# Install (dev + agent). Add ",server" to also work on server/.
+pip install -e ".[dev,windows]"     # Windows
+pip install -e ".[dev,server]"      # server/ work (what CI installs for tests)
+
 # Run the full test suite
 python -m pytest -q
 
 # Run a single test file / test
 python -m pytest tests/test_storage.py -q
 python -m pytest tests/test_uploader.py::test_batch_resumes_same_batch_id -q
+
+# Lint (also run in CI)
+ruff check .
 
 # Run the agent for real (dry-run = logs upload payloads instead of sending them)
 python -m agent.main --dry-run --data-dir ./demo_run --no-tray
@@ -38,19 +50,35 @@ python -m agent.main --enable-detailed-consent --data-dir ./demo_run
 # Build a standalone Windows exe (PyInstaller)
 pyinstaller health-agent.spec
 
-# Lint (also run in CI)
-ruff check .
+# Run the ingest server locally (SQLite auto-created, no Docker needed)
+uvicorn server.main:app --reload
+
+# ...or with Postgres via docker-compose
+docker compose up
+
+# Mint a device enrollment code (only way to issue one -- no admin UI in this phase)
+python -m server.admin_cli mint-code [--issued-for NAME] [--ttl-hours N]
+
+# Create/apply Alembic migrations against DATABASE_URL
+alembic revision --autogenerate -m "message"
+alembic upgrade head
 ```
 
 Because collector threads write to the local SQLite buffer, avoid running two `agent.main`
 instances against the same `--data-dir` at once (WAL mode tolerates concurrent readers, not
 concurrent writer processes).
 
+CI (`.github/workflows/tests.yml`) runs on both `windows-latest` and `ubuntu-latest`: installs
+`.[dev,server]`, runs `ruff check .` then `pytest -q`, then (separately) builds the PyInstaller
+exe from `.[dev]`.
+
 ## Architecture
 
-**Data flow:** independent collector threads → `Storage` (encrypted SQLite buffer) →
-`Uploader` (APScheduler-driven, paced batch drain) → ingest server (contract-only in Phase 1;
-`--dry-run` swaps in `LoggingTransport` from `agent/main.py` instead of a real server).
+### Agent data flow
+
+independent collector threads → `Storage` (encrypted SQLite buffer) → `Uploader`
+(APScheduler-driven, paced batch drain) → ingest server (`server/`, or `LoggingTransport` from
+`agent/main.py` when run with `--dry-run`).
 
 `agent/main.py` is the orchestrator — it is the one place that wires config → consent → secrets
 → cipher → storage → collectors → tray → uploader → scheduler. Read it first when tracing how
@@ -130,8 +158,10 @@ manually against your own OS keychain (e.g. for a live smoke test), clean up the
 ### Sync (`agent/sync/`)
 
 `api.py` holds the pydantic contract models (`IngestEvent`, `IngestRequest`, `IngestResponse`,
-`EnrollRequest`, `EnrollResponse`) — these *are* the wire contract; keep them in sync with
-`docs/API.md` if either changes.
+`EnrollRequest`, `EnrollResponse`) — these *are* the wire contract. `server/schemas.py` imports
+these same classes directly rather than redefining them, so client and server structurally
+cannot drift; still update `docs/API.md` if the shape changes, since it's the human-readable
+source of truth for both this contract and the browser bridge's `/pair` + `/tab-event` contract.
 
 `uploader.py`'s `Uploader.run_tick()` is the core loop, called on an APScheduler interval from
 `main.py`. Idempotency is the central design constraint: `_next_batch()` always checks
@@ -143,8 +173,7 @@ batch_id/event_ids again and should return them in the response's `duplicates` l
 Backoff (`BackoffState`) is exponential but a server-supplied `Retry-After` (on 429) always
 takes precedence over the computed curve.
 
-`enroll.py` implements the client side of the not-yet-built `/v1/enroll` endpoint (see
-`docs/API.md`); there is no real server for either endpoint in Phase 1.
+`enroll.py` implements the client side of `/v1/enroll` (see `docs/API.md` and `server/routes/enroll.py`).
 
 ### Tray (`agent/tray.py`)
 
@@ -163,6 +192,39 @@ stores the returned token.
 `background.js` listens on `chrome.tabs.onActivated`/`onUpdated` and POSTs `{url, title, ts}` to
 `/tab-event` with the stored bearer token.
 
+### Server (`server/`)
+
+`server/main.py`'s `create_app()` wires middleware + the `enroll`/`ingest` routers; production
+entrypoint is `uvicorn server.main:app` (see `Dockerfile`). Settings (`server/config.py`) are
+entirely env-driven (`DATABASE_URL`, `MAX_REQUEST_BYTES`, `RATE_LIMIT_*`,
+`ENROLLMENT_CODE_TTL_HOURS`) so the same code runs unmodified in CI (SQLite), docker-compose
+(Postgres via `db` service), and the real deployment.
+
+- **`db.py`**: Postgres is the schema of record — `server/alembic/` migrations own it exclusively.
+  Against SQLite, `create_app()` instead calls `Base.metadata.create_all()` directly (dev/test
+  convenience only). `insert_ignore_conflict()` is a dialect-aware `ON CONFLICT DO NOTHING`
+  helper (Postgres vs. SQLite `insert()` variants) — this is what makes `/v1/ingest` idempotent
+  server-side, matching the client's retry-safe batch design in `agent/sync/uploader.py`.
+- **`models.py`**: all timestamps are Unix epoch floats, not SQL `DateTime` — deliberately
+  matches the client-side convention (`agent/storage.py`'s `ts`) and sidesteps a real
+  cross-dialect trap where `DateTime(timezone=True)` round-trips as naive on SQLite but
+  tz-aware on Postgres.
+- **`auth.py`**: device tokens are random (`secrets.token_urlsafe(32)`), only their sha256 hash
+  is ever persisted; the plaintext is returned exactly once, at enrollment. `enroll_device()`
+  and `ratelimit.check_and_increment()` both use `SELECT ... FOR UPDATE` (`with_for_update()`)
+  to close a TOCTOU race between two concurrent requests reading the same row before either
+  commits — mirror this pattern for any new check-then-write logic here.
+- **`ratelimit.py`**: per-device fixed-window limiting, counters stored in Postgres/SQLite
+  (not Redis/in-process) so it stays correct if the web service scales to multiple instances.
+- **`middleware.py`**: `GzipAndSizeLimitMiddleware` enforces a real 413 on oversized bodies,
+  checked via `Content-Length` before any body is read, and separately guards against a gzip
+  bomb by decompressing in a bounded, streaming loop rather than one unbounded
+  `gzip.decompress()` call — a small compressed payload can still expand past the cap.
+- **`admin_cli.py`**: `python -m server.admin_cli mint-code` is the *only* way to issue a device
+  enrollment code in this phase — there is no dashboard or user-account system.
+- **`schemas.py`**: re-exports `agent.sync.api`'s pydantic models rather than redefining them
+  (see Sync section above).
+
 ## Testing conventions
 
 - `tests/mock_server.py` provides a FastAPI-based `MockIngestServer` fixture for integration
@@ -176,6 +238,8 @@ stores the returned token.
   keychain state and can leak state between test runs.
 - `freezegun` is available (dev dependency) for time-dependent tests (backoff, batch pacing,
   pairing-code TTL).
+- `tests/server/` covers the FastAPI app directly (via `conftest.py` fixtures) rather than
+  through `mock_server.py`, which exists for the *client*-side (`Uploader`) tests instead.
 
 ## Key non-obvious invariants (don't casually change)
 
@@ -190,5 +254,9 @@ stores the returned token.
   threat of an arbitrary web page's `fetch()` reaching the localhost port. Don't consolidate
   them into a single check.
 - `docs/API.md` is the source of truth for the `/v1/ingest` and `/v1/enroll` wire contracts and
-  for the browser bridge's `/pair` + `/tab-event` contract — update it alongside `agent/sync/api.py`
-  or `agent/collectors/browser_bridge.py` if either payload shape changes.
+  for the browser bridge's `/pair` + `/tab-event` contract — update it alongside
+  `agent/sync/api.py` (server/schemas.py just re-exports it, see above) or
+  `agent/collectors/browser_bridge.py` if either payload shape changes.
+- `enroll_device()` and `ratelimit.check_and_increment()` both rely on `with_for_update()` row
+  locks to close a TOCTOU race between concurrent requests — don't remove these under the
+  assumption a single `SELECT` then `UPDATE` is equivalent.

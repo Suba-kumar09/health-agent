@@ -5,9 +5,13 @@ import json
 import uuid
 
 from server.auth import mint_enrollment_code
+from server.models import Employee
 
 
 def _enroll(client, db_session) -> tuple[str, str]:
+    if db_session.query(Employee).filter_by(system_name="test-laptop").first() is None:
+        db_session.add(Employee(name="Test Employee", system_name="test-laptop"))
+        db_session.commit()
     code = mint_enrollment_code(db_session, ttl_hours=24)
     db_session.commit()
     response = client.post(

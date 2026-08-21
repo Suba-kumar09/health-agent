@@ -18,6 +18,15 @@ from sqlalchemy.orm import Mapped, mapped_column
 from server.db import Base
 
 
+class Employee(Base):
+    __tablename__ = "employees"
+
+    employee_id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    system_name: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+
+
 class Device(Base):
     __tablename__ = "devices"
 
@@ -28,6 +37,7 @@ class Device(Base):
     os_version: Mapped[str] = mapped_column(String, nullable=False)
     enrolled_at: Mapped[float] = mapped_column(Float, default=time.time)
     last_seen_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    employee_id: Mapped[str | None] = mapped_column(String, ForeignKey("employees.employee_id"), nullable=True)
 
 
 class EnrollmentCode(Base):
