@@ -4,9 +4,11 @@ import hashlib
 import secrets
 import time
 
+from fastapi import Depends, Header, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from server.db import get_session
 from server.models import Device, Employee, EnrollmentCode
 
 
@@ -30,6 +32,21 @@ def generate_enrollment_code() -> str:
 def resolve_device_by_token(session: Session, token: str) -> Device | None:
     token_hash = hash_token(token)
     return session.execute(select(Device).where(Device.device_token_hash == token_hash)).scalar_one_or_none()
+
+
+def resolve_device_dependency(
+    authorization: str = Header(default=""), session: Session = Depends(get_session)
+) -> Device:
+    """FastAPI dependency: bearer-token auth shared by every device-scoped route
+    (ingest, messages, ...) -- kept in one place so they can't drift on the
+    "missing/invalid Bearer token -> 401" behavior."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401)
+    token = authorization[len("Bearer ") :]
+    device = resolve_device_by_token(session, token)
+    if device is None:
+        raise HTTPException(status_code=401)
+    return device
 
 
 def resolve_employee_by_system_name(session: Session, system_name: str) -> Employee | None:

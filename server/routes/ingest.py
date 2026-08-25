@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import time
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from server.auth import resolve_device_by_token
+from server.auth import resolve_device_dependency
 from server.config import get_settings
 from server.db import get_session, insert_ignore_conflict
 from server.models import Device, Event
@@ -16,20 +16,10 @@ from server.schemas import IngestRequest, IngestResponse
 router = APIRouter()
 
 
-def _resolve_device(authorization: str = Header(default=""), session: Session = Depends(get_session)) -> Device:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401)
-    token = authorization[len("Bearer ") :]
-    device = resolve_device_by_token(session, token)
-    if device is None:
-        raise HTTPException(status_code=401)
-    return device
-
-
 @router.post("/v1/ingest", response_model=IngestResponse)
 def ingest(
     payload: IngestRequest,
-    device: Device = Depends(_resolve_device),
+    device: Device = Depends(resolve_device_dependency),
     session: Session = Depends(get_session),
 ):
     # Prevents a token/device_id mismatch from writing events under the wrong device.

@@ -47,3 +47,13 @@ class EnrollResponse(BaseModel):
 
 
 IngestOutcome = Literal["ok", "auth_failed", "too_large", "rate_limited", "network_error"]
+
+
+class PendingMessage(BaseModel):
+    message_id: str
+    text: str
+    created_at: float
+
+
+class PendingMessagesResponse(BaseModel):
+    messages: list[PendingMessage] = Field(default_factory=list)
