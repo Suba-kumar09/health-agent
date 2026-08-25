@@ -80,6 +80,21 @@ def test_continuous_active_streak_stops_at_last_afk_break(db_session):
     assert streak_start_ts == 2100.0
 
 
+def test_continuous_active_streak_stops_at_a_large_gap_between_active_rows(db_session):
+    # Regression test: two "active" rows separated by a multi-day gap (e.g.
+    # the agent wasn't running in between) must not be treated as one
+    # unbroken streak, even though neither row is literally "afk" -- see
+    # _STREAK_GAP_BREAK_SECS.
+    _make_device(db_session)
+    _add_afk_event(db_session, "dev-1", ts=1000.0, state="active", duration=50.0)  # days ago -- ignored
+    _add_afk_event(db_session, "dev-1", ts=1000.0 + 4 * 86400, state="active", duration=30.0)
+
+    total_secs, streak_start_ts = continuous_active_streak(db_session, "dev-1")
+
+    assert total_secs == 30.0
+    assert streak_start_ts == 1000.0 + 4 * 86400
+
+
 def test_generate_for_device_none_when_under_threshold(db_session):
     device = _make_device(db_session)
     _add_afk_event(db_session, "dev-1", ts=1000.0, state="active", duration=60.0)

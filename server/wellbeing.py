@@ -19,6 +19,17 @@ from server.models import Device, Event, Message
 
 logger = logging.getLogger(__name__)
 
+# If two consecutive "active" afk rows are separated by more than this, treat
+# it as a break in the streak even though neither row is literally "afk" --
+# a gap this large almost always means the agent simply wasn't running (the
+# device was off, asleep, or the agent was restarted), not that someone
+# worked continuously across it. Without this, a streak that started days
+# ago across multiple separate agent sessions reads as one unbroken stretch,
+# and (worse) permanently suppresses new messages once any message has ever
+# been sent partway through it -- see generate_for_device's last_message
+# check below.
+_STREAK_GAP_BREAK_SECS = 600.0
+
 _PROMPT_TEMPLATE = (
     "You are a caring wellbeing companion. Real activity tracking on this person's "
     "computer shows they have been continuously active, with no break, for "
@@ -52,11 +63,17 @@ def continuous_active_streak(session: Session, device_id: str) -> tuple[float, f
 
     total = 0.0
     streak_start_ts = afk_events[0].ts
+    prev_row_start: float | None = None
     for event in afk_events:
         if event.data.get("state") != "active":
             break
+        if prev_row_start is not None:
+            gap = prev_row_start - (event.ts + (event.duration or 0.0))
+            if gap > _STREAK_GAP_BREAK_SECS:
+                break
         total += event.duration or 0.0
         streak_start_ts = event.ts
+        prev_row_start = event.ts
     return total, streak_start_ts
 
 
