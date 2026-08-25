@@ -408,7 +408,11 @@ def main(argv: list[str] | None = None) -> None:
             c.stop()
         if tray is not None:
             tray.stop()
-        scheduler.shutdown(wait=False)
+        # wait=True: a scheduled uploader.run_tick() may still be mid-flight (e.g.
+        # blocked in an HTTP call to an unreachable server) -- without waiting for it
+        # to finish first, storage.close() below can race it and it'll crash trying
+        # to run a query on an already-closed sqlite connection.
+        scheduler.shutdown(wait=True)
         uploader.run_tick()  # final drain attempt before exit
         storage.close()
 
