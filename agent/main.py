@@ -408,7 +408,7 @@ def main(argv: list[str] | None = None) -> None:
             c.stop()
         if tray is not None:
             tray.stop()
-        scheduler.shutdown(wait=False)
+        scheduler.shutdown(wait=True)
         uploader.run_tick()  # final drain attempt before exit
         storage.close()
 
