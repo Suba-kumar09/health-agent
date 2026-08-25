@@ -224,8 +224,8 @@ def main(argv: list[str] | None = None) -> None:
             logger.debug("window_watcher new state: %s", event.data)
             return event.event_id
 
-        def on_extend_window(event_id: str, duration: float) -> None:
-            storage.extend_duration(event_id, duration)
+        def on_extend_window(event_id: str, duration: float) -> bool:
+            return storage.extend_duration(event_id, duration)
 
         window_watcher = WindowWatcherCollector(on_new_window=on_new_window, on_extend=on_extend_window)
         window_watcher.start()
@@ -244,8 +244,8 @@ def main(argv: list[str] | None = None) -> None:
                 logger.debug("afk state changed: %s", info["state"])
                 return event.event_id
 
-            def on_extend_afk(event_id: str, duration: float) -> None:
-                storage.extend_duration(event_id, duration)
+            def on_extend_afk(event_id: str, duration: float) -> bool:
+                return storage.extend_duration(event_id, duration)
 
             afk = AfkCollector(
                 get_last_activity_ts=lambda: input_watcher.aggregator.last_activity_ts,

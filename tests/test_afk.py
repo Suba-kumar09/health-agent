@@ -14,6 +14,7 @@ def make_afk(threshold_secs=120.0, start=1000.0):
 
     def on_extend(event_id, duration):
         extends.append((event_id, duration))
+        return True
 
     afk = AfkCollector(
         get_last_activity_ts=lambda: last_activity["ts"],

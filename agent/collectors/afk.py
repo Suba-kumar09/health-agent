@@ -25,7 +25,7 @@ class AfkCollector(Collector):
         self,
         get_last_activity_ts: Callable[[], float],
         on_new_state: Callable[[dict, float], str],
-        on_extend: Callable[[str, float], None],
+        on_extend: Callable[[str, float], bool],
         threshold_secs: float = 120.0,
         poll_interval_secs: float = 5.0,
         now_fn: Callable[[], float] = time.time,

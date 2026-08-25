@@ -23,7 +23,7 @@ class WindowWatcherCollector(Collector):
     def __init__(
         self,
         on_new_window: Callable[[dict, float], str],
-        on_extend: Callable[[str, float], None],
+        on_extend: Callable[[str, float], bool],
         poll_interval_secs: float = 2.0,
         get_active_window_fn: Callable[[], dict | None] | None = None,
     ) -> None:

@@ -1,7 +1,7 @@
 from agent.collectors.coalescing import CoalescingStatePoller
 
 
-def make_poller():
+def make_poller(extend_succeeds=True):
     events = []  # (info, ts) for new states
     extends = []  # (event_id, duration)
 
@@ -12,6 +12,7 @@ def make_poller():
 
     def on_extend(event_id, duration):
         extends.append((event_id, duration))
+        return extend_succeeds() if callable(extend_succeeds) else extend_succeeds
 
     poller = CoalescingStatePoller(
         state_key_fn=lambda info: info.get("k") if info else None,
@@ -68,3 +69,34 @@ def test_none_info_clears_current_state_without_creating_event():
     # (not an extend of the old one) since the current state was cleared.
     poller.poll({"k": "a"}, now=110.0)
     assert len(events) == 2
+
+
+def test_frozen_row_starts_a_fresh_event_instead_of_going_dark():
+    # Simulates a batch upload claiming the current row mid-streak (see
+    # Storage.extend_duration's synced=0/batch_id IS NULL guard): on_extend
+    # starts returning False even though the state itself hasn't changed.
+    poller, events, extends = make_poller(extend_succeeds=False)
+    poller.poll({"k": "a"}, now=100.0)
+
+    poller.poll({"k": "a"}, now=105.0)
+
+    assert len(events) == 2  # a fresh event was minted, not silently dropped
+    assert events[1][1] == {"k": "a"}  # same state, new row
+    assert extends == [("evt-0", 5.0)]  # the failed extend attempt is still recorded
+
+
+def test_recovers_after_frozen_row_and_keeps_extending_the_new_one():
+    calls = {"n": 0}
+
+    def flaky_extend_succeeds():
+        calls["n"] += 1
+        return calls["n"] > 1  # first extend fails (frozen), rest succeed
+
+    poller, events, extends = make_poller(extend_succeeds=flaky_extend_succeeds)
+    poller.poll({"k": "a"}, now=100.0)
+
+    poller.poll({"k": "a"}, now=105.0)  # extend fails -> fresh evt-1 starts at t=105
+    poller.poll({"k": "a"}, now=115.0)  # extends evt-1 normally
+
+    assert len(events) == 2
+    assert extends[-1] == ("evt-1", 10.0)
