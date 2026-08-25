@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from collections.abc import Callable
 
 from agent.collectors.base import Collector
 from agent.collectors.coalescing import CoalescingStatePoller
+
+logger = logging.getLogger(__name__)
 
 
 def _afk_state_key(info: dict | None) -> str | None:
@@ -59,5 +62,12 @@ class AfkCollector(Collector):
 
     def _poll_loop(self) -> None:
         while not self._stop_event.is_set():
-            self.poll_once()
+            try:
+                self.poll_once()
+            except Exception:
+                # A daemon thread that dies here goes silent forever with no
+                # crash and no log line -- every *other* collector keeps
+                # running normally, which is what made this so hard to spot.
+                # Matches WindowWatcherCollector's existing pattern.
+                logger.exception("afk poll failed")
             self._stop_event.wait(self.poll_interval_secs)
