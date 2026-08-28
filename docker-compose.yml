@@ -24,9 +24,9 @@ services:
     ports:
       # Exposed on the host's public interface for direct plain-HTTP testing.
       # TEMPORARY: tokens and event data travel in cleartext this way. Before
-      # using this with real devices/data, switch to "127.0.0.1:8000:8000"
+      # using this with real devices/data, switch to "127.0.0.1:8001:8001"
       # and put a TLS-terminating reverse proxy (nginx/Caddy) on 443 in front.
-      - "8000:8000"
+      - "8001:8001"
     depends_on:
       db:
         condition: service_healthy

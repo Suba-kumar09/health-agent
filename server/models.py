@@ -71,3 +71,21 @@ class RateLimitCounter(Base):
     device_id: Mapped[str] = mapped_column(String, ForeignKey("devices.device_id"), primary_key=True)
     window_start: Mapped[float] = mapped_column(Float, nullable=False)
     count_in_window: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Message(Base):
+    """LLM-generated wellbeing message for a device, queued for delivery.
+
+    `created_at` also doubles as the high-water mark for how far back the next
+    generation tick needs to summarize (see server/wellbeing.py) -- a device's
+    most recent Message row is "last time we told them something."
+    """
+
+    __tablename__ = "messages"
+    __table_args__ = (Index("ix_messages_device_id_created_at", "device_id", "created_at"),)
+
+    message_id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    device_id: Mapped[str] = mapped_column(String, ForeignKey("devices.device_id"), nullable=False)
+    text: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+    delivered_at: Mapped[float | None] = mapped_column(Float, nullable=True)

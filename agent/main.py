@@ -34,6 +34,7 @@ from agent.reports import refresh_reports
 from agent.secrets import SecretStore
 from agent.storage import Event, Storage, run_retention
 from agent.sync.enroll import EnrollmentError, enroll
+from agent.sync.messages import MessagesPoller
 from agent.sync.uploader import Uploader
 from agent.tray import TrayController
 
@@ -223,8 +224,8 @@ def main(argv: list[str] | None = None) -> None:
             logger.debug("window_watcher new state: %s", event.data)
             return event.event_id
 
-        def on_extend_window(event_id: str, duration: float) -> None:
-            storage.extend_duration(event_id, duration)
+        def on_extend_window(event_id: str, duration: float) -> bool:
+            return storage.extend_duration(event_id, duration)
 
         window_watcher = WindowWatcherCollector(on_new_window=on_new_window, on_extend=on_extend_window)
         window_watcher.start()
@@ -243,8 +244,8 @@ def main(argv: list[str] | None = None) -> None:
                 logger.debug("afk state changed: %s", info["state"])
                 return event.event_id
 
-            def on_extend_afk(event_id: str, duration: float) -> None:
-                storage.extend_duration(event_id, duration)
+            def on_extend_afk(event_id: str, duration: float) -> bool:
+                return storage.extend_duration(event_id, duration)
 
             afk = AfkCollector(
                 get_last_activity_ts=lambda: input_watcher.aggregator.last_activity_ts,
@@ -345,6 +346,18 @@ def main(argv: list[str] | None = None) -> None:
         token_provider=lambda: device_token,
     )
 
+    def on_wellbeing_message(text: str) -> None:
+        logger.info("Wellbeing message: %s", text)
+        if tray is not None:
+            tray.show_message(text)
+
+    messages_poller = MessagesPoller(
+        http_client=http_client,
+        server_url=config.agent.server_url,
+        token_provider=lambda: device_token,
+        on_message=on_wellbeing_message,
+    )
+
     if config.retention.mode == "keep_days":
         logger.info("Retention mode=keep_days (keep_days=%d; grace_secs ignored)", config.retention.keep_days)
     else:
@@ -352,6 +365,7 @@ def main(argv: list[str] | None = None) -> None:
 
     scheduler = BackgroundScheduler()
     scheduler.add_job(uploader.run_tick, "interval", seconds=config.agent.sync_interval_secs)
+    scheduler.add_job(messages_poller.poll_once, "interval", seconds=config.agent.messages_poll_interval_secs)
     scheduler.add_job(
         lambda: run_retention(storage, config.retention),
         "interval",
@@ -394,7 +408,11 @@ def main(argv: list[str] | None = None) -> None:
             c.stop()
         if tray is not None:
             tray.stop()
-        scheduler.shutdown(wait=False)
+        # wait=True: a scheduled uploader.run_tick() may still be mid-flight (e.g.
+        # blocked in an HTTP call to an unreachable server) -- without waiting for it
+        # to finish first, storage.close() below can race it and it'll crash trying
+        # to run a query on an already-closed sqlite connection.
+        scheduler.shutdown(wait=True)
         uploader.run_tick()  # final drain attempt before exit
         storage.close()
 

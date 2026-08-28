@@ -103,3 +103,15 @@ class TrayController:
             self._icon.stop()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
+
+    def show_message(self, text: str) -> None:
+        """Surfaces a wellbeing message as a native OS notification via the
+        tray icon. Falls back to a log line if there's no tray (--no-tray) or
+        the backend doesn't support notify()."""
+        if self._icon is None:
+            logger.info("Wellbeing message (no tray): %s", text)
+            return
+        try:
+            self._icon.notify(text, "Health Agent")
+        except NotImplementedError:  # pragma: no cover - not every backend supports notify()
+            logger.info("Wellbeing message (notify unsupported): %s", text)

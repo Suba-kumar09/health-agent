@@ -90,6 +90,45 @@ each code is single-use and expires after `ENROLLMENT_CODE_TTL_HOURS`
 (default 36h). On success the server stores only a sha256 hash of the
 device token, never the plaintext.
 
+## GET /v1/messages/pending
+
+```
+Headers: Authorization: Bearer <device_token>
+Response 200: {"messages": [{"message_id": "...", "text": "...", "created_at": 1732000000.0}, ...]}
+Response 401: -- auth failed
+```
+
+LLM-generated wellbeing "intimate messages" (Phase-2 addition), queued server-side and
+delivered to the owning device on poll. Server implementation: `server/routes/messages.py`
+(auth via the same `resolve_device_dependency` as `/v1/ingest`) + `server/wellbeing.py`
+(generation) + `server/main.py`'s `run_wellbeing_tick` (an APScheduler job, same library the
+agent uses, started from `create_app()`'s lifespan). Each returned message is marked delivered
+in the same request that returns it -- at-most-once, not durable-retry like `/v1/ingest`, since
+a missed notification is a UX gap, not a correctness bug.
+
+Client implementation: `agent.sync.messages.MessagesPoller`, polled on an APScheduler interval
+(`agent.messages_poll_interval_secs`, default 300s) from `agent/main.py`, same
+`token_provider`/`http_client` wiring as `Uploader`. Each message's `text` is handed to
+`TrayController.show_message()`, which surfaces it as a native OS notification via
+`pystray`'s `icon.notify()` (falls back to a log line with `--no-tray` or on backends that
+don't support `notify()`).
+
+Server-side generation (`server/wellbeing.py`): each tick, for every enrolled device,
+`continuous_active_streak()` sums that device's `afk` events backward from the most recent one
+until it hits a `state="afk"` (idle) row -- this is the device's current unbroken working
+streak, in seconds (summed across however many rows it's split into at sync-interval
+boundaries; see `agent/collectors/coalescing.py`'s `extend_duration` gate). If that streak is
+still `state="afk"` (they're currently idle) or hasn't yet reached `WELLBEING_BREAK_THRESHOLD_SECS`
+(default 1800s/30min), nothing happens that tick. Once it crosses the threshold, a message is
+generated *once* for that streak (tracked by comparing the streak's start timestamp against the
+device's last-sent message) -- the streak has to break (a fresh `afk` idle event) and cross the
+threshold again before another message is sent, so it isn't repeated every tick while someone
+keeps working. The prompt asks a local Ollama instance (`OLLAMA_URL`, default
+`http://127.0.0.1:11434`; `WELLBEING_MODEL`, default `qwen2.5:3b`) for one concrete, actionable
+sentence naming the actual minutes worked -- not vague encouragement. An unreachable/slow LLM is
+caught and logged, not fatal to the tick. Toggle the whole feature off with
+`WELLBEING_ENABLED=false`.
+
 ---
 
 # Browser bridge (agent <-> companion extension)

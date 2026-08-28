@@ -8,6 +8,8 @@ from agent.sync.api import (
     IngestEvent,
     IngestRequest,
     IngestResponse,
+    PendingMessage,
+    PendingMessagesResponse,
     RateLimitResponse,
 )
 
@@ -17,5 +19,7 @@ __all__ = [
     "IngestEvent",
     "IngestRequest",
     "IngestResponse",
+    "PendingMessage",
+    "PendingMessagesResponse",
     "RateLimitResponse",
 ]

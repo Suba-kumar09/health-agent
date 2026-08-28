@@ -15,6 +15,11 @@ Phase 1 of a cross-platform health-monitoring system, in two halves that live in
 - **`server/`** — the FastAPI ingest server the agent uploads to: device enrollment
   (`/v1/enroll`), event ingest (`/v1/ingest`), Postgres-backed in production (SQLite for
   local dev/CI), migrated via Alembic.
+- **Wellbeing messages** (`server/wellbeing.py` + `server/routes/messages.py` +
+  `agent/sync/messages.py`) — a background scheduler on the server detects a device's
+  continuous-active streaks (no break) from its already-ingested `afk` events, asks a local
+  Ollama model for a short "take a break" reminder, and the agent polls it back down and
+  shows it as a native OS notification via the tray icon. See the dedicated section below.
 
 Windows is the primary/validated target for the agent. macOS and Linux platform backends
 (`agent/platform/macos.py`, `agent/platform/linux.py`) are written per the same interface but
@@ -51,7 +56,11 @@ python -m agent.main --enable-detailed-consent --data-dir ./demo_run
 pyinstaller health-agent.spec
 
 # Run the ingest server locally (SQLite auto-created, no Docker needed)
-uvicorn server.main:app --reload
+uvicorn server.main:app --reload --port 8001
+# ...or, defaults to 0.0.0.0:8001 without needing flags on the command line:
+python -m server.main
+# ...or:
+make run-server
 
 # ...or with Postgres via docker-compose
 docker compose up
@@ -63,6 +72,13 @@ python -m server.admin_cli mint-code [--issued-for NAME] [--ttl-hours N]
 alembic revision --autogenerate -m "message"
 alembic upgrade head
 ```
+
+Wellbeing-message settings are env-driven like everything else in `server/config.py`:
+`WELLBEING_ENABLED` (default true), `OLLAMA_URL` (default `http://127.0.0.1:11434`),
+`WELLBEING_MODEL` (default `qwen2.5:3b`), `WELLBEING_INTERVAL_SECS` (scheduler tick, default
+300), `WELLBEING_BREAK_THRESHOLD_SECS` (continuous-active seconds before a reminder fires,
+default 1800). On the agent side, `messages_poll_interval_secs` in `config.toml`'s `[agent]`
+section (default 300) controls how often it checks for a new message.
 
 Because collector threads write to the local SQLite buffer, avoid running two `agent.main`
 instances against the same `--data-dir` at once (WAL mode tolerates concurrent readers, not
@@ -114,13 +130,24 @@ objects and call `storage.append()` — collectors themselves know nothing about
   Wayland foreground-window inspection is a known Phase-1 gap, don't try to work around it.
 - **`afk.py`**: derives active/idle purely from `input_watcher`'s
   `aggregator.last_activity_ts` (passed in as a callback from `main.py`, not a shared object) —
-  `afk` cannot run if `input_watcher` is disabled.
+  `afk` cannot run if `input_watcher` is disabled. `_poll_loop` wraps `poll_once()` in
+  try/except (mirroring `window_watcher.py`'s loop) — without it, a single unhandled exception
+  kills this daemon thread silently forever, with zero crash and zero log line, while every
+  other collector keeps running normally. This was a real, hard-to-diagnose live bug: `afk`
+  would work for one or two state transitions after a restart, then go permanently dark.
 - **`coalescing.py`**: `CoalescingStatePoller` is shared, generic heartbeat logic used by both
   `window_watcher` and `afk`. Consecutive polls with an identical state key extend the current
   event's `duration` via `Storage.extend_duration` instead of inserting a new row; a changed
   state key finalizes the previous event and inserts a new one. `extend_duration` only succeeds
-  while the row is `synced=0 AND batch_id IS NULL` — once a batch claims it, the row is frozen
-  and the next poll starts a fresh event.
+  while the row is `synced=0 AND batch_id IS NULL` — once a batch claims it, the row is frozen.
+  `on_extend` returns that success/failure as a bool, and when it's `False` (row got frozen,
+  state itself hasn't changed) `poll()` mints a fresh event for the *same* key instead of
+  quietly continuing to call `on_extend` on a dead row forever — a real bug found via live
+  testing: `afk` in particular can hold one state for a very long time, so without this
+  recovery path a device's whole continuous-activity history after the first sync silently
+  stops growing (this is what `server/wellbeing.py`'s streak detection depends on being
+  accurate). `window_watcher` mostly masked the same underlying bug before this fix, since its
+  state (app/title) changes often enough to self-heal via the "state changed" path anyway.
 - **`browser_bridge.py`**: a stdlib `ThreadingHTTPServer` bound to `127.0.0.1` on a random port
   (any open browser tab can `fetch()` a localhost port, so this is deliberately hardened, not
   an oversight). Two independent gates on every POST: an Origin allowlist
@@ -225,6 +252,45 @@ entirely env-driven (`DATABASE_URL`, `MAX_REQUEST_BYTES`, `RATE_LIMIT_*`,
 - **`schemas.py`**: re-exports `agent.sync.api`'s pydantic models rather than redefining them
   (see Sync section above).
 
+### Wellbeing messages (`server/wellbeing.py`, `server/routes/messages.py`, `agent/sync/messages.py`)
+
+Server-driven, agent-delivered: the server decides when a device needs a break reminder and
+generates the text; the agent's job is only to poll for and display whatever it's handed.
+
+- **`continuous_active_streak()`** (`server/wellbeing.py`) sums a device's `afk` events
+  backward from the most recent one until it hits a `state="afk"` row, or a gap of more than
+  `_STREAK_GAP_BREAK_SECS` (600s) between two consecutive `state="active"` rows — a gap that
+  large almost always means the agent simply wasn't running (device off/asleep/restarted), not
+  that someone worked continuously across it. Without this second check, a device whose `afk`
+  history has no genuine idle row yet (e.g. only run in short bursts across separate days)
+  would read as one streak spanning however many days back its history goes.
+- **`generate_for_device()`** only calls the LLM once a streak crosses
+  `WELLBEING_BREAK_THRESHOLD_SECS`, and only once per streak — it compares the streak's start
+  timestamp against the device's most-recently-generated `Message.created_at` and skips if a
+  message already covers this streak. This is also why the gap-break check above matters: a
+  `streak_start_ts` that never advances (because nothing ever broke the "streak") permanently
+  suppresses all future messages for that device once any message has ever been sent.
+- The prompt (`_PROMPT_TEMPLATE`) explicitly asks for one concrete, actionable sentence naming
+  the real minutes worked — an earlier version asked for generic encouragement and produced
+  vague praise instead of something someone would actually act on.
+- **`run_wellbeing_tick()`** (`server/main.py`) iterates every enrolled `Device` each tick with
+  a per-device try/except — a slow/unreachable LLM or one bad device must not block the tick
+  for the rest. Scheduled via a `BackgroundScheduler` started in `create_app()`'s `lifespan`,
+  guarded by `WELLBEING_ENABLED`. It deliberately does not run during `pytest` — the
+  `tests/server/conftest.py` fixtures build `TestClient(app)` without a `with` block, which
+  never triggers ASGI lifespan — so the test suite has no Ollama dependency.
+- **`GET /v1/messages/pending`** (`server/routes/messages.py`) uses the same
+  `resolve_device_dependency` auth as `/v1/ingest` (factored into `server/auth.py` so the two
+  routes can't drift on bearer-token handling) and marks returned messages delivered in the
+  same request — at-most-once, not durable-retry like ingest, since a missed notification is a
+  UX gap, not a correctness bug.
+- **`agent/sync/messages.py`**'s `MessagesPoller` mirrors `Uploader`'s
+  `http_client`/`token_provider` wiring but has no batching/backoff of its own. Delivered text
+  reaches the screen via `TrayController.show_message()` (`agent/tray.py`), which reuses the
+  same `pystray` `icon.notify()` mechanism already used for the browser-bridge pairing-code
+  notification — falls back to a log line if there's no tray (`--no-tray`) or the backend
+  doesn't support `notify()`.
+
 ## Testing conventions
 
 - `tests/mock_server.py` provides a FastAPI-based `MockIngestServer` fixture for integration
@@ -240,6 +306,8 @@ entirely env-driven (`DATABASE_URL`, `MAX_REQUEST_BYTES`, `RATE_LIMIT_*`,
   pairing-code TTL).
 - `tests/server/` covers the FastAPI app directly (via `conftest.py` fixtures) rather than
   through `mock_server.py`, which exists for the *client*-side (`Uploader`) tests instead.
+- `tests/server/test_wellbeing.py` monkeypatches `server.wellbeing.call_llm` rather than
+  hitting a real Ollama instance — keep new wellbeing tests off the network the same way.
 
 ## Key non-obvious invariants (don't casually change)
 
@@ -260,3 +328,13 @@ entirely env-driven (`DATABASE_URL`, `MAX_REQUEST_BYTES`, `RATE_LIMIT_*`,
 - `enroll_device()` and `ratelimit.check_and_increment()` both rely on `with_for_update()` row
   locks to close a TOCTOU race between concurrent requests — don't remove these under the
   assumption a single `SELECT` then `UPDATE` is equivalent.
+- `agent/main.py`'s shutdown sequence calls `scheduler.shutdown(wait=True)`, not `wait=False`,
+  before `storage.close()`. With `wait=False`, a `Uploader.run_tick()` still mid-flight (e.g.
+  blocked in an HTTP call to an unreachable server) can resume *after* `storage.close()` has
+  already run and crash with `sqlite3.ProgrammingError: Cannot operate on a closed database`.
+  Found via live testing, not a hypothetical — this was intermittently killing agent shutdown.
+- `server/wellbeing.py`'s per-device "already notified for this streak" check compares against
+  `streak_start_ts`, which only advances when `continuous_active_streak()` actually finds a
+  break (a real `afk` row, or a >600s gap). Don't change the renotify check to compare against
+  something that doesn't track a genuine streak boundary, or a device can get permanently stuck
+  never receiving another message after its first one (see the Wellbeing messages section).

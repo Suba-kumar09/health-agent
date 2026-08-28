@@ -18,6 +18,7 @@ class AgentSection(BaseModel):
     capture_mode: Literal["aggregate", "detailed"] = "aggregate"
     bucket_seconds: int = 30
     browser_bridge_port: int = 0
+    messages_poll_interval_secs: int = 300
 
 
 class SyncSection(BaseModel):
