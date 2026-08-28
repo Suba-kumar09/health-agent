@@ -71,6 +71,12 @@ python -m server.admin_cli mint-code [--issued-for NAME] [--ttl-hours N]
 # Create/apply Alembic migrations against DATABASE_URL
 alembic revision --autogenerate -m "message"
 alembic upgrade head
+
+# One-shot regeneration of the human-readable telemetry views (the running agent
+# already does this on a timer -- see Reports section below)
+python scripts/generate_telemetry_html.py --data-dir ./demo_run
+python scripts/export_readable_json.py --data-dir ./demo_run [--since ... --until ...]
+python scripts/export_readable_csv.py --data-dir ./demo_run
 ```
 
 Wellbeing-message settings are env-driven like everything else in `server/config.py`:
@@ -201,6 +207,28 @@ Backoff (`BackoffState`) is exponential but a server-supplied `Retry-After` (on 
 takes precedence over the computed curve.
 
 `enroll.py` implements the client side of `/v1/enroll` (see `docs/API.md` and `server/routes/enroll.py`).
+
+### Reports / live telemetry (`agent/reports.py`, `agent/json_log.py`)
+
+Two independent, non-authoritative views onto the same captured data, both driven off
+`config.toml`'s `[reports]` and `[privacy]` sections — neither is part of the sync path and
+neither affects what gets uploaded:
+
+- **`agent/reports.py`**: `refresh_reports()` is scheduled by `main.py` as its own APScheduler
+  job (`config.reports.interval_secs`, default 15s) whenever `config.reports.enabled` and the
+  `--no-reports` CLI flag isn't set. It decrypts the full accumulated history in `events.db`
+  (same key the agent itself uses, via `agent.crypto.cipher_for_config`) and rewrites
+  `telemetry.html` (an HTML/CSS/JS dashboard, dark/light aware) and `events_export.json`
+  (`config.reports.window_days` lookback) from scratch each tick — so watching them while the
+  agent runs shows growth, not just the latest tick. `scripts/generate_telemetry_html.py`,
+  `scripts/export_readable_json.py`, and `scripts/export_readable_csv.py` are thin one-shot CLI
+  wrappers around the same underlying functions, useful when the agent isn't running.
+- **`agent/json_log.py`**'s `JsonEventLogger` is a separate, simpler mirror: every event
+  `storage.append()`s is also appended as one JSON line to `<data-dir>/events.jsonl`, gated by
+  `privacy.json_log_enabled`. Unlike `events.db`, this file is deliberately **unencrypted**
+  (readable without the Fernet key for quick scripting) — meaning it carries the same sensitive
+  content in plaintext (window titles, browsing activity) and must never be committed; see
+  `.gitignore`.
 
 ### Tray (`agent/tray.py`)
 
