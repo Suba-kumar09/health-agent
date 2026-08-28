@@ -11,6 +11,8 @@ dist/
 *.spec.bak
 config.toml
 secrets/
+.env
+.env.*
 
 # Local run/demo artifacts -- contain real captured personal activity data,
 # never commit these regardless of what --data-dir is named.
