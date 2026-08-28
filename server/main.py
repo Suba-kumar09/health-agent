@@ -80,3 +80,14 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    # `python -m server.main` (or `python server/main.py`) defaults to 8001 --
+    # matches every device's configured server_url without needing --port on
+    # the command line. `uvicorn server.main:app --reload` still works too,
+    # but that invocation goes through uvicorn's own CLI defaults (port 8000)
+    # since uvicorn never imports/executes this __main__ block.
+    import uvicorn
+
+    uvicorn.run("server.main:app", host="0.0.0.0", port=8001, reload=True)
