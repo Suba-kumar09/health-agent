@@ -30,6 +30,7 @@ from agent.crypto import FieldCipher, NullCipher
 from agent.secrets import SecretStore
 from agent.storage import Event, Storage, run_retention
 from agent.sync.enroll import EnrollmentError, enroll
+from agent.sync.messages import MessagesPoller
 from agent.sync.uploader import Uploader
 from agent.tray import TrayController
 
@@ -325,8 +326,21 @@ def main(argv: list[str] | None = None) -> None:
         token_provider=lambda: device_token,
     )
 
+    def on_wellbeing_message(text: str) -> None:
+        logger.info("Wellbeing message: %s", text)
+        if tray is not None:
+            tray.show_message(text)
+
+    messages_poller = MessagesPoller(
+        http_client=http_client,
+        server_url=config.agent.server_url,
+        token_provider=lambda: device_token,
+        on_message=on_wellbeing_message,
+    )
+
     scheduler = BackgroundScheduler()
     scheduler.add_job(uploader.run_tick, "interval", seconds=config.agent.sync_interval_secs)
+    scheduler.add_job(messages_poller.poll_once, "interval", seconds=config.agent.messages_poll_interval_secs)
     scheduler.add_job(
         lambda: run_retention(storage, config.retention),
         "interval",
