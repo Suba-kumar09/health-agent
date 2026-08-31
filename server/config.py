@@ -48,11 +48,11 @@ def get_settings() -> Settings:
         wellbeing_enabled=_bool_env("WELLBEING_ENABLED", True),
         ollama_url=os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"),
         wellbeing_model=os.environ.get("WELLBEING_MODEL", "qwen2.5:3b"),
-        wellbeing_interval_secs=_int_env("WELLBEING_INTERVAL_SECS", 300),
-        wellbeing_break_threshold_secs=_int_env("WELLBEING_BREAK_THRESHOLD_SECS", 1800),
+        wellbeing_interval_secs=_int_env("WELLBEING_INTERVAL_SECS", 60),
+        wellbeing_break_threshold_secs=_int_env("WELLBEING_BREAK_THRESHOLD_SECS", 60),
         distraction_enabled=_bool_env("DISTRACTION_ENABLED", True),
-        distraction_check_interval_secs=_int_env("DISTRACTION_CHECK_INTERVAL_SECS", 300),
-        distraction_threshold_secs=_int_env("DISTRACTION_THRESHOLD_SECS", 300),
+        distraction_check_interval_secs=_int_env("DISTRACTION_CHECK_INTERVAL_SECS", 60),
+        distraction_threshold_secs=_int_env("DISTRACTION_THRESHOLD_SECS", 60),
         distraction_keywords=[
             k.strip().lower()
             for k in os.environ.get(
