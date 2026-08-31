@@ -16,7 +16,7 @@ class CoalescingStatePoller:
         self,
         state_key_fn: Callable[[dict | None], Hashable | None],
         on_new_state: Callable[[dict, float], str],
-        on_extend: Callable[[str, float], None],
+        on_extend: Callable[[str, float], bool],
         now_fn: Callable[[], float] = time.time,
     ) -> None:
         self.state_key_fn = state_key_fn
@@ -32,8 +32,12 @@ class CoalescingStatePoller:
         key = self.state_key_fn(info)
 
         if key == self._current_key and self._current_event_id is not None:
-            self.on_extend(self._current_event_id, now - self._current_start)
-            return
+            if self.on_extend(self._current_event_id, now - self._current_start):
+                return
+            # The row was already synced/claimed by an in-flight batch and is
+            # now frozen (Storage.extend_duration returned False) -- the
+            # real-world state hasn't actually changed, so start a fresh
+            # event instead of silently losing all further duration for it.
 
         self._current_key = key
         self._current_start = now
