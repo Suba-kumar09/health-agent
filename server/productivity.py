@@ -23,11 +23,12 @@ from server.wellbeing import _STREAK_GAP_BREAK_SECS, call_llm
 logger = logging.getLogger(__name__)
 
 _PROMPT_TEMPLATE = (
-    "You are a caring accountability companion. Real activity tracking on this person's "
-    "computer shows they have been idle, with no keyboard or mouse activity, for "
-    "{minutes:.0f} minutes. Write ONE short, warm sentence checking in and nudging them "
-    "back to work -- mention the {minutes:.0f} minutes specifically. Be concrete and "
-    "direct, not vague encouragement.\n\n"
+    "You are a direct productivity accountability companion. Real activity tracking on this "
+    "person's computer shows they have been idle, with no keyboard or mouse activity, for "
+    "{minutes:.0f} minutes. Write ONE short, firm sentence telling them to stop being idle and "
+    "get back to work now -- mention the {minutes:.0f} minutes specifically. Do NOT suggest "
+    "taking a break or resting; they are already idle, the goal is to get them working again. "
+    "Be concrete and direct, not vague.\n\n"
     "Your one-sentence reminder:"
 )
 

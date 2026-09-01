@@ -100,9 +100,19 @@ class TrayController:
             self._thread.join(timeout=2.0)
 
     def show_message(self, text: str) -> None:
-        """Surfaces a wellbeing message as a native OS notification via the
-        tray icon. Falls back to a log line if there's no tray (--no-tray) or
-        the backend doesn't support notify()."""
+        """Surfaces a wellbeing message as a native OS notification.
+
+        On Windows, tries a real WinRT Toast first (see _show_windows_toast) --
+        unlike pystray's notify(), which uses the legacy Shell_NotifyIcon
+        balloon-tip API, a WinRT toast is logged in Action Center and stays
+        there until dismissed, instead of auto-vanishing after a few seconds
+        with no way to reread it. Falls back to pystray's tray-icon notify()
+        (the only option on macOS/Linux, and the fallback on Windows too if
+        windows-toasts isn't installed or the call fails for any reason), and
+        finally to a log line if there's no tray at all (--no-tray) or the
+        backend doesn't support notify()."""
+        if platform.system() == "Windows" and self._show_windows_toast(text):
+            return
         if self._icon is None:
             logger.info("Wellbeing message (no tray): %s", text)
             return
@@ -117,3 +127,24 @@ class TrayController:
             # itself throws, that's a real bug and was previously swallowed
             # silently here, making this exact failure mode undiagnosable.
             logger.exception("Failed to show wellbeing notification: %s", text)
+
+    def _show_windows_toast(self, text: str) -> bool:
+        """Tries to show `text` as a real WinRT Toast notification. Returns
+        True on success (caller should not also fall back to the balloon
+        tip), False if windows-toasts isn't installed or the call failed for
+        any other reason -- never raises, so show_message can always safely
+        fall back to pystray's notify()."""
+        try:
+            from windows_toasts import Toast, WindowsToaster
+
+            toaster = WindowsToaster("Health Agent")
+            toast = Toast()
+            toast.text_fields = [text]
+            toaster.show_toast(toast)
+            return True
+        except ImportError:
+            logger.info("windows-toasts not installed, falling back to tray balloon notification")
+            return False
+        except Exception:
+            logger.exception("WinRT toast failed, falling back to tray balloon notification: %s", text)
+            return False

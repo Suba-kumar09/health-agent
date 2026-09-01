@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-windows = ["pywin32>=306"]
+windows = ["pywin32>=306", "windows-toasts>=1.1,<2.0"]
 macos = ["pyobjc-framework-Cocoa>=10.0", "pyobjc-framework-Quartz>=10.0"]
 linux = ["python-xlib>=0.33"]
 dev = [
