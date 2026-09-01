@@ -9,85 +9,31 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
-from sqlalchemy import select
 
 from server.config import get_settings
-from server.db import Base, engine, session_scope
-from server.goals import generate_distraction_reminder_for_device
+from server.db import Base, engine
 from server.middleware import GzipAndSizeLimitMiddleware
-from server.models import Device
+from server.orchestrator import run_orchestrator_tick
 from server.routes import enroll, goals, ingest, messages
-from server.wellbeing import generate_for_device
 
 logger = logging.getLogger(__name__)
-
-
-def run_wellbeing_tick() -> None:
-    """One pass over all enrolled devices, generating a new wellbeing message
-    for any with fresh activity since their last one. Runs on the background
-    scheduler started in `lifespan` -- a slow/unreachable LLM or a bad device
-    must not take down the tick for the rest, hence the per-device try/except.
-    """
-    settings = get_settings()
-    with session_scope() as session:
-        devices = session.execute(select(Device)).scalars().all()
-        for device in devices:
-            try:
-                generate_for_device(
-                    session,
-                    device,
-                    settings.ollama_url,
-                    settings.wellbeing_model,
-                    settings.wellbeing_break_threshold_secs,
-                )
-            except Exception:
-                logger.exception("Wellbeing tick failed for device %s", device.device_id)
-
-
-def run_distraction_tick() -> None:
-    """One pass over all enrolled devices, generating a new distraction
-    reminder for any currently on a keyword-matching site/app for long
-    enough -- independent of whether the device's employee has a goal set
-    (a goal only enriches the message, see server/goals.py). Same
-    per-device failure isolation as run_wellbeing_tick.
-    """
-    settings = get_settings()
-    with session_scope() as session:
-        devices = session.execute(select(Device)).scalars().all()
-        for device in devices:
-            try:
-                generate_distraction_reminder_for_device(
-                    session,
-                    device,
-                    settings.ollama_url,
-                    settings.wellbeing_model,
-                    settings.distraction_keywords,
-                    settings.distraction_threshold_secs,
-                )
-            except Exception:
-                logger.exception("Distraction tick failed for device %s", device.device_id)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     scheduler = None
-    if settings.wellbeing_enabled or settings.distraction_enabled:
+    if settings.wellbeing_enabled or settings.distraction_enabled or settings.productivity_enabled:
         scheduler = BackgroundScheduler()
-        if settings.wellbeing_enabled:
-            scheduler.add_job(run_wellbeing_tick, "interval", seconds=settings.wellbeing_interval_secs)
-            logger.info(
-                "Wellbeing scheduler started (every %ds, model=%s)",
-                settings.wellbeing_interval_secs,
-                settings.wellbeing_model,
-            )
-        if settings.distraction_enabled:
-            scheduler.add_job(run_distraction_tick, "interval", seconds=settings.distraction_check_interval_secs)
-            logger.info(
-                "Distraction scheduler started (every %ds, threshold=%ds)",
-                settings.distraction_check_interval_secs,
-                settings.distraction_threshold_secs,
-            )
+        scheduler.add_job(run_orchestrator_tick, "interval", seconds=settings.orchestrator_interval_secs)
+        logger.info(
+            "Orchestrator scheduler started (every %ds; break=%s distraction=%s idle=%s, model=%s)",
+            settings.orchestrator_interval_secs,
+            settings.wellbeing_enabled,
+            settings.distraction_enabled,
+            settings.productivity_enabled,
+            settings.wellbeing_model,
+        )
         scheduler.start()
     yield
     if scheduler is not None:
