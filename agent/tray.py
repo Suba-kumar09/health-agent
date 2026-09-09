@@ -137,9 +137,14 @@ class TrayController:
         try:
             from windows_toasts import Toast, WindowsToaster
 
-            toaster = WindowsToaster("Health Agent")
+            # Must match the AUMID set by _register_windows_app_identity() --
+            # a toast filed under a different, unregistered id is silently
+            # accepted (lands in Action Center, no exception) but Windows
+            # refuses to pop the banner for it.
+            toaster = WindowsToaster(_WINDOWS_APP_USER_MODEL_ID)
             toast = Toast()
             toast.text_fields = [text]
+            toast.attribution_text = "Health Agent"
             toaster.show_toast(toast)
             return True
         except ImportError:

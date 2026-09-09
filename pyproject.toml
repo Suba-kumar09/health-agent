@@ -32,6 +32,7 @@ server = [
     "alembic>=1.13",
     "psycopg[binary]>=3.1",
     "python-multipart>=0.0.9",
+    "python-dotenv>=1.0",
 ]
 
 [build-system]

@@ -52,16 +52,26 @@ def _matches_keyword(data: dict, keywords: list[str]) -> bool:
     return any(keyword in haystack for keyword in keywords)
 
 
+def _is_distracting(data: dict, keywords: list[str], exempt_keywords: list[str]) -> bool:
+    """A distraction-keyword match doesn't count if the title/url/app also
+    matches an exempt keyword -- e.g. a YouTube tab titled "Linear Algebra
+    Lecture 3" shouldn't fire a distraction reminder just because "youtube"
+    matched. Exemption always wins over a keyword match, never the reverse."""
+    return _matches_keyword(data, keywords) and not _matches_keyword(data, exempt_keywords)
+
+
 def _distraction_label(data: dict) -> str:
     return data.get("title") or data.get("url") or data.get("app") or "that"
 
 
 def continuous_distraction_streak(
-    session: Session, device_id: str, keywords: list[str]
+    session: Session, device_id: str, keywords: list[str], exempt_keywords: list[str]
 ) -> tuple[float, float, str] | None:
     """(total_distracted_secs, streak_start_ts, latest_label) for `device_id`'s
-    current unbroken run of keyword-matching window/tab events, or None if
-    the most recent window_watcher/browser_bridge event doesn't match.
+    current unbroken run of keyword-matching, non-exempt window/tab events, or
+    None if the most recent window_watcher/browser_bridge event doesn't
+    qualify (see _is_distracting -- a distraction-keyword match is skipped if
+    it also matches an exempt keyword, e.g. "youtube" + "lecture").
 
     Same walk-backward-and-sum structure (and the same
     `_STREAK_GAP_BREAK_SECS` gap-break rule) as
@@ -77,7 +87,7 @@ def continuous_distraction_streak(
         .scalars()
         .all()
     )
-    if not events or not _matches_keyword(events[0].data, keywords):
+    if not events or not _is_distracting(events[0].data, keywords, exempt_keywords):
         return None
 
     total = 0.0
@@ -85,7 +95,7 @@ def continuous_distraction_streak(
     latest_label = _distraction_label(events[0].data)
     prev_row_start: float | None = None
     for event in events:
-        if not _matches_keyword(event.data, keywords):
+        if not _is_distracting(event.data, keywords, exempt_keywords):
             break
         if prev_row_start is not None:
             gap = prev_row_start - (event.ts + (event.duration or 0.0))
@@ -115,9 +125,9 @@ def current_goal(session: Session, employee_id: str | None) -> Goal | None:
 def generate_distraction_reminder_for_device(
     session: Session,
     device: Device,
-    ollama_url: str,
     model: str,
     keywords: list[str],
+    exempt_keywords: list[str],
     threshold_secs: float,
 ) -> Message | None:
     """Checks whether `device` has been continuously on a distracting
@@ -126,7 +136,7 @@ def generate_distraction_reminder_for_device(
     prerequisite for sending a reminder. Returns None (logging a warning on
     an LLM failure) if there's nothing to send; never raises.
     """
-    streak = continuous_distraction_streak(session, device.device_id, keywords)
+    streak = continuous_distraction_streak(session, device.device_id, keywords, exempt_keywords)
     if streak is None:
         return None
     total_secs, streak_start_ts, label = streak
@@ -156,7 +166,7 @@ def generate_distraction_reminder_for_device(
         prompt = _PROMPT_NO_GOAL.format(title=label, minutes=minutes)
 
     try:
-        text = call_llm(prompt, ollama_url, model)
+        text = call_llm(prompt, model)
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.warning("Distraction message generation failed for device %s: %s", device.device_id, exc)
         return None

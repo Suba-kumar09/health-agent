@@ -162,8 +162,13 @@ Each tick (`DISTRACTION_CHECK_INTERVAL_SECS`, default 300s), for every enrolled 
 `continuous_distraction_streak()` sums the device's most recent `window_watcher`/`browser_bridge`
 events backward from the latest one, for as long as each event's `title`/`url`/`app` matches a
 keyword in `DISTRACTION_KEYWORDS` (default: youtube, netflix, instagram, facebook, twitter,
-tiktok, twitch, reddit, hotstar, prime video) -- same walk-backward-and-sum shape (and the same
-large-gap-breaks-the-streak rule) as the wellbeing tick's `continuous_active_streak()`.
+tiktok, twitch, reddit, hotstar, prime video) **and does not also match** a keyword in
+`DISTRACTION_EXEMPT_KEYWORDS` (default: tutorial, lecture, course, crash course, how to,
+documentary, study, exam, lesson, seminar, workshop) -- e.g. a YouTube tab titled "Linear Algebra
+Lecture 3" matches `youtube` but is exempted by `lecture`, so it never counts as distraction time.
+Exemption always wins over a keyword match (see `goals._is_distracting`). Same
+walk-backward-and-sum shape (and the same large-gap-breaks-the-streak rule) as the wellbeing
+tick's `continuous_active_streak()`.
 
 **A goal is never required** for a distraction reminder to fire -- once the streak crosses
 `DISTRACTION_THRESHOLD_SECS` (default 300s) and hasn't already been messaged for *this* streak,
@@ -172,9 +177,10 @@ a message always generates:
   goal text, and minutes remaining to its deadline
 - if not, the prompt just names the distraction and how long, with no task/deadline framing
 
-Both branches call the same shared `wellbeing.call_llm(prompt, ollama_url, model)` helper (it
-takes an already-built prompt string, not a hardcoded template, precisely so this module and
-`server/wellbeing.py` can share it). Toggle the whole feature off with `DISTRACTION_ENABLED=false`.
+Both branches call the same shared `wellbeing.call_llm(prompt, model)` helper (it takes an
+already-built prompt string, not a hardcoded template, precisely so this module and
+`server/wellbeing.py` can share it; it reads the OpenAI API key/base URL from settings itself).
+Toggle the whole feature off with `DISTRACTION_ENABLED=false`.
 
 ---
 

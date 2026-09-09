@@ -1,6 +1,6 @@
 """Detects "you've been working continuously with no break" moments from a
 device's `afk` events, and turns them into a short LLM-generated reminder via
-a local Ollama instance.
+the OpenAI API.
 
 `generate_for_device` is the entry point, called on a timer from
 `server.main`'s lifespan-managed scheduler. It is deliberately
@@ -15,6 +15,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from server.config import get_settings
 from server.models import Device, Event, Message
 
 logger = logging.getLogger(__name__)
@@ -77,27 +78,30 @@ def continuous_active_streak(session: Session, device_id: str) -> tuple[float, f
     return total, streak_start_ts
 
 
-def call_llm(prompt: str, ollama_url: str, model: str, timeout: float = 30.0) -> str:
-    """Shared Ollama call used by both this module and server/goals.py --
-    takes an already-built prompt string so each generator owns its own
-    prompt template without duplicating the HTTP-call plumbing."""
+def call_llm(prompt: str, model: str, timeout: float = 30.0) -> str:
+    """Shared OpenAI chat-completions call used by this module, server/goals.py,
+    and server/productivity.py -- takes an already-built prompt string so each
+    generator owns its own prompt template without duplicating the HTTP-call
+    plumbing. Reads the API key/base URL from settings itself (same ad-hoc
+    get_settings() pattern already used in server/main.py and
+    server/routes/ingest.py) rather than threading them through every caller."""
+    settings = get_settings()
     resp = httpx.post(
-        f"{ollama_url.rstrip('/')}/api/chat",
+        f"{settings.openai_base_url.rstrip('/')}/chat/completions",
+        headers={"Authorization": f"Bearer {settings.openai_api_key}"},
         json={
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
         },
         timeout=timeout,
     )
     resp.raise_for_status()
-    return resp.json()["message"]["content"].strip()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def generate_for_device(
     session: Session,
     device: Device,
-    ollama_url: str,
     model: str,
     break_threshold_secs: float,
 ) -> Message | None:
@@ -128,7 +132,7 @@ def generate_for_device(
         return None  # already notified for this streak
 
     try:
-        text = call_llm(_PROMPT_TEMPLATE.format(minutes=total_secs / 60), ollama_url, model)
+        text = call_llm(_PROMPT_TEMPLATE.format(minutes=total_secs / 60), model)
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.warning("Wellbeing message generation failed for device %s: %s", device.device_id, exc)
         return None

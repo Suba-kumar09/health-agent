@@ -20,9 +20,7 @@ def _make_device(db_session, device_id: str = "dev-1") -> Device:
 
 
 def _generate(db_session, device, threshold_secs: float = 1800):
-    return generate_for_device(
-        db_session, device, ollama_url="http://unused", model="unused", break_threshold_secs=threshold_secs
-    )
+    return generate_for_device(db_session, device, model="unused", break_threshold_secs=threshold_secs)
 
 
 def _add_afk_event(db_session, device_id: str, ts: float, state: str, duration: float):
@@ -106,7 +104,7 @@ def test_generate_for_device_persists_message_over_threshold(db_session, monkeyp
     device = _make_device(db_session)
     _add_afk_event(db_session, "dev-1", ts=1000.0, state="active", duration=1900.0)
 
-    def fake_call_llm(minutes, ollama_url, model):
+    def fake_call_llm(minutes, model):
         return "take a break, you've earned it!"
 
     monkeypatch.setattr("server.wellbeing.call_llm", fake_call_llm)
@@ -123,7 +121,7 @@ def test_generate_for_device_returns_none_on_llm_failure(db_session, monkeypatch
     device = _make_device(db_session)
     _add_afk_event(db_session, "dev-1", ts=1000.0, state="active", duration=1900.0)
 
-    def _boom(minutes, ollama_url, model):
+    def _boom(minutes, model):
         raise ValueError("bad response")
 
     monkeypatch.setattr("server.wellbeing.call_llm", _boom)
@@ -142,7 +140,7 @@ def test_generate_for_device_does_not_renotify_same_streak(db_session, monkeypat
     )
     db_session.commit()
 
-    def fail_if_called(minutes, ollama_url, model):
+    def fail_if_called(minutes, model):
         raise AssertionError("should not be called -- already notified this streak")
 
     monkeypatch.setattr("server.wellbeing.call_llm", fail_if_called)
@@ -165,7 +163,7 @@ def test_generate_for_device_renotifies_after_a_new_break(db_session, monkeypatc
     # ...and started a fresh streak, now over threshold.
     _add_afk_event(db_session, "dev-1", ts=1900.0, state="active", duration=1900.0)
 
-    def fake_call_llm(minutes, ollama_url, model):
+    def fake_call_llm(minutes, model):
         return "new streak reminder"
 
     monkeypatch.setattr("server.wellbeing.call_llm", fake_call_llm)

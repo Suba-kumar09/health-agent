@@ -15,7 +15,8 @@ def _settings(**overrides) -> Settings:
         rate_limit_max_requests=1,
         enrollment_code_ttl_hours=1,
         wellbeing_enabled=True,
-        ollama_url="http://unused",
+        openai_api_key="unused",
+        openai_base_url="http://unused",
         wellbeing_model="unused",
         wellbeing_interval_secs=60,
         wellbeing_break_threshold_secs=1800,
@@ -23,6 +24,7 @@ def _settings(**overrides) -> Settings:
         distraction_check_interval_secs=60,
         distraction_threshold_secs=1800,
         distraction_keywords=["youtube", "netflix"],
+        distraction_exempt_keywords=["tutorial", "lecture", "course", "study"],
         productivity_enabled=True,
         productivity_idle_threshold_secs=1800,
         orchestrator_interval_secs=60,
@@ -131,6 +133,23 @@ def test_distraction_wins_over_notifier_when_both_conditions_met(db_session, mon
 
     assert result is not None
     assert result.kind == "distraction"
+
+
+def test_no_agent_fires_for_exempt_study_content(db_session, monkeypatch):
+    # A study-titled tab is exempt from Distraction, and there's no separate
+    # agent for it -- it should simply stay silent, same as any other
+    # non-distracting, non-idle, "just started being active" state.
+    device = _make_device(db_session)
+    _add_afk_event(db_session, "dev-1", ts=1000.0, state="active", duration=30.0)
+    _add_window_event(db_session, "dev-1", ts=1000.0, title="Organic Chemistry Course - YouTube", duration=1900.0)
+    monkeypatch.setattr(
+        "server.goals.call_llm",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("Distraction should not fire -- title is exempt")),
+    )
+
+    result = route_device(db_session, device, _settings())
+
+    assert result is None
 
 
 def test_policy_engine_blocks_even_when_an_agent_would_fire(db_session, monkeypatch):

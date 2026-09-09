@@ -1,13 +1,24 @@
 """Env-driven settings for the ingest server.
 
-Everything here is read from the environment so the same image/codebase runs
-locally (docker-compose), in CI (SQLite, no external DB needed), and on the
+Everything here is read from the environment so the same image/docker-compose
+image runs locally, in CI (SQLite, no external DB needed), and on the
 managed-Postgres deployment target -- only DATABASE_URL changes.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+# Loads .env into the real process environment on import, once, before any
+# get_settings() call -- without this, a terminal that starts `python -m
+# server.main` without first sourcing .env silently runs with an empty
+# OPENAI_API_KEY (every call_llm() fails immediately with "Illegal header
+# value b'Bearer '", caught and logged nowhere visible). Never overrides a
+# variable that's already set in the real environment (e.g. docker-compose,
+# CI) -- .env is strictly a local-dev fallback, not an override mechanism.
+load_dotenv()
 
 
 def _int_env(name: str, default: int) -> int:
@@ -28,7 +39,8 @@ class Settings:
     rate_limit_max_requests: int
     enrollment_code_ttl_hours: int
     wellbeing_enabled: bool
-    ollama_url: str
+    openai_api_key: str
+    openai_base_url: str
     wellbeing_model: str
     wellbeing_interval_secs: int
     wellbeing_break_threshold_secs: int
@@ -36,6 +48,7 @@ class Settings:
     distraction_check_interval_secs: int
     distraction_threshold_secs: int
     distraction_keywords: list[str]
+    distraction_exempt_keywords: list[str]
     productivity_enabled: bool
     productivity_idle_threshold_secs: int
     orchestrator_interval_secs: int
@@ -54,8 +67,9 @@ def get_settings() -> Settings:
         rate_limit_max_requests=_int_env("RATE_LIMIT_MAX_REQUESTS", 30),
         enrollment_code_ttl_hours=_int_env("ENROLLMENT_CODE_TTL_HOURS", 36),
         wellbeing_enabled=_bool_env("WELLBEING_ENABLED", True),
-        ollama_url=os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"),
-        wellbeing_model=os.environ.get("WELLBEING_MODEL", "qwen2.5:3b"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+        openai_base_url=os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        wellbeing_model=os.environ.get("WELLBEING_MODEL", "gpt-4o-mini"),
         wellbeing_interval_secs=_int_env("WELLBEING_INTERVAL_SECS", 60),
         wellbeing_break_threshold_secs=_int_env("WELLBEING_BREAK_THRESHOLD_SECS", 60),
         distraction_enabled=_bool_env("DISTRACTION_ENABLED", True),
@@ -66,6 +80,14 @@ def get_settings() -> Settings:
             for k in os.environ.get(
                 "DISTRACTION_KEYWORDS",
                 "youtube,netflix,instagram,facebook,twitter,tiktok,twitch,reddit,hotstar,prime video",
+            ).split(",")
+            if k.strip()
+        ],
+        distraction_exempt_keywords=[
+            k.strip().lower()
+            for k in os.environ.get(
+                "DISTRACTION_EXEMPT_KEYWORDS",
+                "tutorial,lecture,course,crash course,how to,documentary,study,exam,lesson,seminar,workshop",
             ).split(",")
             if k.strip()
         ],

@@ -7,6 +7,7 @@ from server.goals import continuous_distraction_streak, current_goal, generate_d
 from server.models import Device, Employee, Event, Goal, Message
 
 _KEYWORDS = ["youtube", "netflix"]
+_EXEMPT_KEYWORDS = ["tutorial", "lecture", "course", "study"]
 
 
 def _make_employee(db_session, employee_id: str = "emp-1", system_name: str = "test-laptop") -> Employee:
@@ -49,23 +50,23 @@ def _generate(db_session, device, threshold_secs: float = 300):
     return generate_distraction_reminder_for_device(
         db_session,
         device,
-        ollama_url="http://unused",
         model="unused",
         keywords=_KEYWORDS,
+        exempt_keywords=_EXEMPT_KEYWORDS,
         threshold_secs=threshold_secs,
     )
 
 
 def test_continuous_distraction_streak_none_with_no_events(db_session):
     _make_device(db_session)
-    assert continuous_distraction_streak(db_session, "dev-1", _KEYWORDS) is None
+    assert continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS) is None
 
 
 def test_continuous_distraction_streak_none_when_latest_not_a_match(db_session):
     _make_device(db_session)
     _add_window_event(db_session, "dev-1", ts=1000.0, title="Some Video Title - YouTube", duration=60.0)
     _add_window_event(db_session, "dev-1", ts=1100.0, title="config.toml - Visual Studio Code", duration=60.0)
-    assert continuous_distraction_streak(db_session, "dev-1", _KEYWORDS) is None
+    assert continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS) is None
 
 
 def test_continuous_distraction_streak_sums_consecutive_matching_rows(db_session):
@@ -74,7 +75,7 @@ def test_continuous_distraction_streak_sums_consecutive_matching_rows(db_session
     _add_window_event(db_session, "dev-1", ts=1100.0, title="Hero Movie - YouTube", duration=200.0)
     _add_window_event(db_session, "dev-1", ts=1300.0, title="Hero Movie - YouTube", duration=50.0)
 
-    result = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS)
+    result = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS)
 
     assert result is not None
     total_secs, streak_start_ts, label = result
@@ -88,7 +89,7 @@ def test_continuous_distraction_streak_stops_at_non_matching_row(db_session):
     _add_window_event(db_session, "dev-1", ts=1000.0, title="config.toml - Visual Studio Code", duration=999.0)
     _add_window_event(db_session, "dev-1", ts=2000.0, title="Hero Movie - YouTube", duration=120.0)
 
-    total_secs, streak_start_ts, label = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS)
+    total_secs, streak_start_ts, label = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS)
 
     assert total_secs == 120.0
     assert streak_start_ts == 2000.0
@@ -99,7 +100,7 @@ def test_continuous_distraction_streak_stops_at_a_large_gap(db_session):
     _add_window_event(db_session, "dev-1", ts=1000.0, title="Hero Movie - YouTube", duration=50.0)
     _add_window_event(db_session, "dev-1", ts=1000.0 + 4 * 86400, title="Hero Movie - YouTube", duration=30.0)
 
-    total_secs, streak_start_ts, _ = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS)
+    total_secs, streak_start_ts, _ = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS)
 
     assert total_secs == 30.0
     assert streak_start_ts == 1000.0 + 4 * 86400
@@ -119,10 +120,35 @@ def test_continuous_distraction_streak_checks_browser_bridge_url_too(db_session)
     db_session.add(event)
     db_session.commit()
 
-    result = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS)
+    result = continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS)
 
     assert result is not None
     assert result[0] == 200.0
+
+
+def test_continuous_distraction_streak_none_when_title_is_exempt(db_session):
+    # A YouTube tab titled as a lecture/tutorial isn't a distraction, even
+    # though "youtube" itself is a distraction keyword.
+    _make_device(db_session)
+    _add_window_event(db_session, "dev-1", ts=1000.0, title="Linear Algebra Lecture 3 - YouTube", duration=600.0)
+    assert continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS) is None
+
+
+def test_continuous_distraction_streak_stops_when_content_becomes_exempt(db_session):
+    # Watching entertainment, then switching to a study video, ends the
+    # distraction streak rather than continuing to count it.
+    _make_device(db_session)
+    _add_window_event(db_session, "dev-1", ts=1000.0, title="Funny Cats Compilation - YouTube", duration=200.0)
+    _add_window_event(db_session, "dev-1", ts=1200.0, title="Organic Chemistry Course - YouTube", duration=300.0)
+    assert continuous_distraction_streak(db_session, "dev-1", _KEYWORDS, _EXEMPT_KEYWORDS) is None
+
+
+def test_generate_none_for_exempt_youtube_content(db_session):
+    device = _make_device(db_session)
+    _add_window_event(
+        db_session, "dev-1", ts=1000.0, title="Full Python Tutorial for Beginners - YouTube", duration=400.0
+    )
+    assert _generate(db_session, device) is None
 
 
 def test_current_goal_none_without_employee(db_session):
@@ -171,7 +197,7 @@ def test_generate_persists_message_with_no_goal(db_session, monkeypatch):
 
     captured_prompt = {}
 
-    def fake_call_llm(prompt, ollama_url, model):
+    def fake_call_llm(prompt, model):
         captured_prompt["value"] = prompt
         return "stop watching hero movie and get back to work!"
 
@@ -197,7 +223,7 @@ def test_generate_persists_message_with_goal(db_session, monkeypatch):
 
     captured_prompt = {}
 
-    def fake_call_llm(prompt, ollama_url, model):
+    def fake_call_llm(prompt, model):
         captured_prompt["value"] = prompt
         return "come back and finish the report!"
 
@@ -213,7 +239,7 @@ def test_generate_returns_none_on_llm_failure(db_session, monkeypatch):
     device = _make_device(db_session)
     _add_window_event(db_session, "dev-1", ts=1000.0, title="Hero Movie - YouTube", duration=400.0)
 
-    def _boom(prompt, ollama_url, model):
+    def _boom(prompt, model):
         raise ValueError("bad response")
 
     monkeypatch.setattr("server.goals.call_llm", _boom)
@@ -238,7 +264,7 @@ def test_generate_does_not_renotify_same_streak(db_session, monkeypatch):
     )
     db_session.commit()
 
-    def fail_if_called(prompt, ollama_url, model):
+    def fail_if_called(prompt, model):
         raise AssertionError("should not be called -- already notified this streak")
 
     monkeypatch.setattr("server.goals.call_llm", fail_if_called)
@@ -259,7 +285,7 @@ def test_break_message_does_not_suppress_distraction_message(db_session, monkeyp
     )
     db_session.commit()
 
-    monkeypatch.setattr("server.goals.call_llm", lambda prompt, ollama_url, model: "distraction reminder")
+    monkeypatch.setattr("server.goals.call_llm", lambda prompt, model: "distraction reminder")
 
     result = _generate(db_session, device)
 
