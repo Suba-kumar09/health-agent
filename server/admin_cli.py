@@ -42,9 +42,14 @@ def add_employee(name: str, system_name: str) -> str:
         return employee.employee_id
 
 
-def list_employees() -> list[Employee]:
+def list_employees() -> list[tuple[str, str, str]]:
+    """Returns (employee_id, name, system_name) tuples rather than Employee
+    objects -- session_scope() closes the session before this returns, and
+    SQLAlchemy's default expire_on_commit leaves any attribute access on a
+    detached Employee instance raising DetachedInstanceError."""
     with session_scope() as session:
-        return list(session.execute(select(Employee).order_by(Employee.name)).scalars())
+        rows = session.execute(select(Employee).order_by(Employee.name)).scalars()
+        return [(e.employee_id, e.name, e.system_name) for e in rows]
 
 
 def main() -> None:
@@ -74,8 +79,8 @@ def main() -> None:
         employee_id = add_employee(name=args.name, system_name=args.system_name)
         print(f"registered {args.name!r} ({args.system_name}) as employee_id={employee_id}")
     elif args.command == "list-employees":
-        for employee in list_employees():
-            print(f"{employee.employee_id}\t{employee.name}\t{employee.system_name}")
+        for employee_id, name, system_name in list_employees():
+            print(f"{employee_id}\t{name}\t{system_name}")
 
 
 if __name__ == "__main__":
