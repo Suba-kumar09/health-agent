@@ -9,12 +9,13 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from server.config import get_settings
 from server.db import Base, engine
 from server.middleware import GzipAndSizeLimitMiddleware
 from server.orchestrator import run_orchestrator_tick
-from server.routes import enroll, goals, ingest, messages
+from server.routes import dashboard, enroll, goals, ingest, messages
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,22 @@ def create_app() -> FastAPI:
         Base.metadata.create_all(bind=engine)
 
     app.add_middleware(GzipAndSizeLimitMiddleware, max_body_bytes=settings.max_request_bytes)
+    # dashboard/ is a separate origin (Vite dev server) with no auth/session
+    # system to piggyback on (see server/routes/dashboard.py) -- GET-only,
+    # read-only endpoints, so a permissive dev CORS policy doesn't expose any
+    # mutation. Tighten this before any real deployment.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.dashboard_origins,
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
 
     app.include_router(ingest.router)
     app.include_router(enroll.router)
     app.include_router(messages.router)
     app.include_router(goals.router)
+    app.include_router(dashboard.router)
 
     return app
 

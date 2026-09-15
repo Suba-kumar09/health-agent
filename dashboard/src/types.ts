@@ -27,7 +27,7 @@ export interface NudgeMessage {
 }
 
 export interface DashboardSummary {
-  deviceName: string;
+  deviceName: string | null; // null if the employee is registered but no device has enrolled yet
   employeeName: string;
   now: number; // unix seconds, server/mock clock
   todaySegments: ActivitySegment[];
@@ -43,15 +43,18 @@ export interface DayHistoryEntry {
   date: string; // YYYY-MM-DD
   activeSecs: number;
   idleSecs: number;
-  topApp: string;
+  topApp: string | null;
 }
 
+// No "completed" flag exists server-side (see server/models.py's Goal
+// docstring - deliberate MVP scope), so a past goal can only be shown as
+// "in progress" or "overdue", never "met"/"missed" - the data to say which
+// doesn't exist.
 export interface GoalHistoryEntry {
   goalId: string;
   text: string;
   createdAt: number;
   deadlineAt: number;
-  metDeadline: boolean | null; // null = still in progress (mirrors server/goals.py: no "completed" flag, MVP scope)
 }
 
 // Mirrors agent/consent.py's separate basic/detailed flags and config.toml's

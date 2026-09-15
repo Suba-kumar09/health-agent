@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { fetchHistory } from "../api";
+import { DashboardApiError, fetchHistory } from "../api";
 import type { DayHistoryEntry } from "../types";
 import { formatDuration } from "../format";
 import { DailyActivityChart } from "../components/DailyActivityChart";
+import { ErrorNotice } from "../components/ErrorNotice";
 import "./HistoryPage.css";
 
 function fullDateLabel(dateStr: string): string {
@@ -15,10 +16,21 @@ function fullDateLabel(dateStr: string): string {
 
 export function HistoryPage() {
   const [entries, setEntries] = useState<DayHistoryEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchHistory().then(setEntries);
+    fetchHistory()
+      .then(setEntries)
+      .catch((e: unknown) => setError(e instanceof DashboardApiError ? e.message : String(e)));
   }, []);
+
+  if (error) {
+    return (
+      <div className="history-page">
+        <ErrorNotice message={error} />
+      </div>
+    );
+  }
 
   if (!entries) {
     return (
@@ -51,7 +63,7 @@ export function HistoryPage() {
             <span>{fullDateLabel(e.date)}</span>
             <span>{formatDuration(e.activeSecs)}</span>
             <span>{formatDuration(e.idleSecs)}</span>
-            <span>{e.topApp}</span>
+            <span>{e.topApp ?? "—"}</span>
           </div>
         ))}
       </div>

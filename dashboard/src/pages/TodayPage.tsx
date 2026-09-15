@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { fetchDashboardSummary } from "../api";
+import { DashboardApiError, fetchDashboardSummary } from "../api";
 import type { DashboardSummary } from "../types";
 import { formatDuration } from "../format";
 import { StatTile } from "../components/StatTile";
 import { ActivityTimeline } from "../components/ActivityTimeline";
 import { GoalProgress } from "../components/GoalProgress";
 import { MessageFeed } from "../components/MessageFeed";
+import { ErrorNotice } from "../components/ErrorNotice";
 import "./TodayPage.css";
 
 function sumDuration(summary: DashboardSummary, state: "active" | "idle"): number {
@@ -16,10 +17,21 @@ function sumDuration(summary: DashboardSummary, state: "active" | "idle"): numbe
 
 export function TodayPage() {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchDashboardSummary().then(setSummary);
+    fetchDashboardSummary()
+      .then(setSummary)
+      .catch((e: unknown) => setError(e instanceof DashboardApiError ? e.message : String(e)));
   }, []);
+
+  if (error) {
+    return (
+      <div className="today-page">
+        <ErrorNotice message={error} />
+      </div>
+    );
+  }
 
   if (!summary) {
     return (
@@ -41,7 +53,8 @@ export function TodayPage() {
         <div>
           <h1 className="today-page__title">Your day</h1>
           <p className="today-page__subtitle">
-            {summary.employeeName} &middot; {summary.deviceName}
+            {summary.employeeName}
+            {summary.deviceName ? <> &middot; {summary.deviceName}</> : " · no device enrolled yet"}
           </p>
         </div>
       </header>

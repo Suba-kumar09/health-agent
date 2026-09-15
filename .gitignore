@@ -14,6 +14,7 @@ config.toml
 secrets/
 .env
 .env.*
+!dashboard/.env.example
 
 # Local run/demo artifacts -- contain real captured personal activity data,
 # never commit these regardless of what --data-dir is named.

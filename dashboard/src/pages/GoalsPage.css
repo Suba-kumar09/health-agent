@@ -131,6 +131,5 @@
   border-radius: 50%;
 }
 
-.goal-list__status--good .goal-list__status-dot { background: var(--status-good); }
 .goal-list__status--critical .goal-list__status-dot { background: var(--status-critical); }
 .goal-list__status--neutral .goal-list__status-dot { background: var(--text-muted); }

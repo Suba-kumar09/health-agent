@@ -7,7 +7,7 @@ managed-Postgres deployment target -- only DATABASE_URL changes.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -57,6 +57,7 @@ class Settings:
     policy_daily_message_limit: int
     policy_quiet_hours_start: int
     policy_quiet_hours_end: int
+    dashboard_origins: list[str] = field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"])
 
 
 def get_settings() -> Settings:
@@ -102,4 +103,9 @@ def get_settings() -> Settings:
         # timezone/business-hours decision, not a guessed default.
         policy_quiet_hours_start=_int_env("POLICY_QUIET_HOURS_START", 0),
         policy_quiet_hours_end=_int_env("POLICY_QUIET_HOURS_END", 0),
+        dashboard_origins=[
+            o.strip()
+            for o in os.environ.get("DASHBOARD_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+            if o.strip()
+        ],
     )

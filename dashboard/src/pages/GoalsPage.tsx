@@ -1,26 +1,29 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { fetchGoalHistory, submitGoal } from "../api";
+import { DashboardApiError, fetchGoalHistory, submitGoal } from "../api";
 import type { GoalHistoryEntry } from "../types";
 import { formatClock, formatDuration } from "../format";
+import { ErrorNotice } from "../components/ErrorNotice";
 import "./GoalsPage.css";
 
+// No "completed" flag exists server-side (see types.ts) - a goal can only be
+// shown as in-progress or overdue, never met/missed.
 function statusFor(goal: GoalHistoryEntry, now: number): { label: string; className: string } {
-  if (goal.metDeadline === null) {
-    return goal.deadlineAt < now
-      ? { label: "Overdue", className: "critical" }
-      : { label: "In progress", className: "neutral" };
-  }
-  return goal.metDeadline ? { label: "Met deadline", className: "good" } : { label: "Missed deadline", className: "critical" };
+  return goal.deadlineAt < now
+    ? { label: "Overdue", className: "critical" }
+    : { label: "In progress", className: "neutral" };
 }
 
 export function GoalsPage() {
   const [goals, setGoals] = useState<GoalHistoryEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [hours, setHours] = useState("2");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchGoalHistory().then(setGoals);
+    fetchGoalHistory()
+      .then(setGoals)
+      .catch((e: unknown) => setError(e instanceof DashboardApiError ? e.message : String(e)));
   }, []);
 
   const now = Math.floor(Date.now() / 1000);
@@ -30,11 +33,16 @@ export function GoalsPage() {
     const hoursNum = parseFloat(hours);
     if (!text.trim() || !hoursNum || hoursNum <= 0) return;
     setSubmitting(true);
-    const goal = await submitGoal(text.trim(), hoursNum);
-    setGoals((prev) => [goal, ...(prev ?? [])]);
-    setText("");
-    setHours("2");
-    setSubmitting(false);
+    try {
+      const updated = await submitGoal(text.trim(), hoursNum);
+      setGoals(updated);
+      setText("");
+      setHours("2");
+    } catch (err) {
+      setError(err instanceof DashboardApiError ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -42,7 +50,7 @@ export function GoalsPage() {
       <header className="goals-page__header">
         <h1 className="goals-page__title">Goals</h1>
         <p className="goals-page__subtitle">
-          Mirrors the <code>/goal</code> form on the agent server — set what you're working on and by when.
+          Posts to the real <code>/goal</code> form on the agent server — set what you're working on and by when.
         </p>
       </header>
 
@@ -74,10 +82,14 @@ export function GoalsPage() {
         </button>
       </form>
 
+      {error && <ErrorNotice message={error} />}
+
       {!goals ? (
-        <div className="page-loading">
-          <p>Loading goals…</p>
-        </div>
+        !error && (
+          <div className="page-loading">
+            <p>Loading goals…</p>
+          </div>
+        )
       ) : (
         <ul className="goal-list">
           {goals.map((g) => {
