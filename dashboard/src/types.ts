@@ -38,3 +38,29 @@ export interface DashboardSummary {
   goal: GoalSummary | null;
   messages: NudgeMessage[];
 }
+
+export interface DayHistoryEntry {
+  date: string; // YYYY-MM-DD
+  activeSecs: number;
+  idleSecs: number;
+  topApp: string;
+}
+
+export interface GoalHistoryEntry {
+  goalId: string;
+  text: string;
+  createdAt: number;
+  deadlineAt: number;
+  metDeadline: boolean | null; // null = still in progress (mirrors server/goals.py: no "completed" flag, MVP scope)
+}
+
+// Mirrors agent/consent.py's separate basic/detailed flags and config.toml's
+// [collectors]/[privacy] tables - read-only here, this dashboard doesn't
+// change device-side settings.
+export interface ConsentSettings {
+  basicConsentedAt: number | null;
+  detailedConsentedAt: number | null;
+  captureMode: "aggregate" | "detailed";
+  encryptAtRest: boolean;
+  collectors: { name: string; label: string; enabled: boolean }[];
+}

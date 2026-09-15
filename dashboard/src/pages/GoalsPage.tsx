@@ -1,0 +1,104 @@
+import { useEffect, useState, type FormEvent } from "react";
+import { fetchGoalHistory, submitGoal } from "../api";
+import type { GoalHistoryEntry } from "../types";
+import { formatClock, formatDuration } from "../format";
+import "./GoalsPage.css";
+
+function statusFor(goal: GoalHistoryEntry, now: number): { label: string; className: string } {
+  if (goal.metDeadline === null) {
+    return goal.deadlineAt < now
+      ? { label: "Overdue", className: "critical" }
+      : { label: "In progress", className: "neutral" };
+  }
+  return goal.metDeadline ? { label: "Met deadline", className: "good" } : { label: "Missed deadline", className: "critical" };
+}
+
+export function GoalsPage() {
+  const [goals, setGoals] = useState<GoalHistoryEntry[] | null>(null);
+  const [text, setText] = useState("");
+  const [hours, setHours] = useState("2");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetchGoalHistory().then(setGoals);
+  }, []);
+
+  const now = Math.floor(Date.now() / 1000);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const hoursNum = parseFloat(hours);
+    if (!text.trim() || !hoursNum || hoursNum <= 0) return;
+    setSubmitting(true);
+    const goal = await submitGoal(text.trim(), hoursNum);
+    setGoals((prev) => [goal, ...(prev ?? [])]);
+    setText("");
+    setHours("2");
+    setSubmitting(false);
+  }
+
+  return (
+    <div className="goals-page">
+      <header className="goals-page__header">
+        <h1 className="goals-page__title">Goals</h1>
+        <p className="goals-page__subtitle">
+          Mirrors the <code>/goal</code> form on the agent server — set what you're working on and by when.
+        </p>
+      </header>
+
+      <form className="goal-form" onSubmit={handleSubmit}>
+        <div className="goal-form__field">
+          <label htmlFor="goal-text">Goal</label>
+          <input
+            id="goal-text"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="e.g. Finish the quarterly report"
+            required
+          />
+        </div>
+        <div className="goal-form__field goal-form__field--hours">
+          <label htmlFor="goal-hours">Hours</label>
+          <input
+            id="goal-hours"
+            type="number"
+            min="0.5"
+            step="0.5"
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+            required
+          />
+        </div>
+        <button type="submit" disabled={submitting}>
+          Set goal
+        </button>
+      </form>
+
+      {!goals ? (
+        <div className="page-loading">
+          <p>Loading goals…</p>
+        </div>
+      ) : (
+        <ul className="goal-list">
+          {goals.map((g) => {
+            const status = statusFor(g, now);
+            return (
+              <li key={g.goalId} className="goal-list__item">
+                <div className="goal-list__main">
+                  <p className="goal-list__text">{g.text}</p>
+                  <p className="goal-list__meta">
+                    Set {formatClock(g.createdAt)} &middot; due in {formatDuration(g.deadlineAt - g.createdAt)}
+                  </p>
+                </div>
+                <span className={`goal-list__status goal-list__status--${status.className}`}>
+                  <span className="goal-list__status-dot" aria-hidden="true" />
+                  {status.label}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}

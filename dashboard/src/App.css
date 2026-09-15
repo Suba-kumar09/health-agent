@@ -1,61 +1,9 @@
-.app-loading {
+.shell {
+  display: flex;
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-secondary);
 }
 
-.app {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 40px 24px 64px;
-}
-
-.app__header {
-  margin-bottom: 24px;
-}
-
-.app__title {
-  font-size: 24px;
-  font-weight: 700;
-  margin: 0;
-  color: var(--text-primary);
-}
-
-.app__subtitle {
-  margin: 4px 0 0;
-  color: var(--text-secondary);
-  font-size: 14px;
-}
-
-.app__stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 14px;
-  margin-bottom: 20px;
-}
-
-.app__grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 20px;
-  align-items: start;
-}
-
-.app__main {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+.shell .page-content {
+  flex: 1;
   min-width: 0;
-}
-
-.app__side {
-  min-width: 0;
-}
-
-@media (max-width: 720px) {
-  .app__grid {
-    grid-template-columns: 1fr;
-  }
 }
