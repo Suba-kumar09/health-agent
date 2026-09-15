@@ -1,0 +1,104 @@
+.app-usage-chart {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.app-usage-chart__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.app-usage-chart__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.app-usage-chart__readout {
+  font-size: 12px;
+  color: var(--text-primary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.app-usage-chart__readout-hint {
+  color: var(--text-muted);
+}
+
+.app-usage-chart__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.app-usage-chart__body {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.app-usage-chart__donut {
+  width: 96px;
+  height: 96px;
+  flex-shrink: 0;
+  transform: rotate(0deg);
+}
+
+.app-usage-chart__slice {
+  cursor: pointer;
+  transition: stroke-width 0.15s ease;
+}
+
+.app-usage-chart__legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.app-usage-chart__legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding: 3px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.app-usage-chart__legend-row--hovered {
+  background: var(--page-plane);
+}
+
+.app-usage-chart__legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.app-usage-chart__legend-name {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.app-usage-chart__legend-time {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}

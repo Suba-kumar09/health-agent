@@ -55,6 +55,11 @@ class NudgeMessageOut(BaseModel):
     created_at: float
 
 
+class AppUsageOut(BaseModel):
+    app: str
+    secs: float
+
+
 class DashboardSummaryOut(BaseModel):
     device_name: str | None
     employee_name: str
@@ -63,6 +68,7 @@ class DashboardSummaryOut(BaseModel):
     current_streak: CurrentStreakOut | None = None
     goal: GoalOut | None = None
     messages: list[NudgeMessageOut] = Field(default_factory=list)
+    app_usage: list[AppUsageOut] = Field(default_factory=list)
 
 
 class DayHistoryEntryOut(BaseModel):
@@ -111,6 +117,7 @@ def get_summary(
     today_segments: list[ActivitySegmentOut] = []
     current_streak: CurrentStreakOut | None = None
     messages: list[NudgeMessageOut] = []
+    app_usage: list[AppUsageOut] = []
 
     if device is not None:
         window_start = now - _DAY_SECS
@@ -152,6 +159,29 @@ def get_summary(
             for m in message_rows
         ]
 
+        window_events = (
+            session.execute(
+                select(Event)
+                .where(
+                    Event.device_id == device.device_id,
+                    Event.collector.in_(("window_watcher", "browser_bridge")),
+                    Event.ts >= window_start,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        app_secs: dict[str, float] = {}
+        for e in window_events:
+            label = e.data.get("app") or e.data.get("title") or e.data.get("url")
+            if not label:
+                continue
+            app_secs[label] = app_secs.get(label, 0.0) + (e.duration or 0.0)
+        app_usage = [
+            AppUsageOut(app=label, secs=secs)
+            for label, secs in sorted(app_secs.items(), key=lambda kv: kv[1], reverse=True)[:8]
+        ]
+
     goal_row = current_goal(session, employee.employee_id)
     goal = (
         GoalOut(text=goal_row.text, created_at=goal_row.created_at, deadline_at=goal_row.deadline_at)
@@ -167,6 +197,7 @@ def get_summary(
         current_streak=current_streak,
         goal=goal,
         messages=messages,
+        app_usage=app_usage,
     )
 
 

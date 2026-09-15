@@ -6,6 +6,7 @@ import { StatTile } from "../components/StatTile";
 import { ActivityTimeline } from "../components/ActivityTimeline";
 import { GoalProgress } from "../components/GoalProgress";
 import { MessageFeed } from "../components/MessageFeed";
+import { AppUsageChart } from "../components/AppUsageChart";
 import { ErrorNotice } from "../components/ErrorNotice";
 import "./TodayPage.css";
 
@@ -79,6 +80,7 @@ export function TodayPage() {
           {summary.goal && <GoalProgress goal={summary.goal} now={summary.now} />}
         </div>
         <div className="today-page__side">
+          <AppUsageChart appUsage={summary.appUsage} />
           <MessageFeed messages={summary.messages} now={summary.now} />
         </div>
       </div>

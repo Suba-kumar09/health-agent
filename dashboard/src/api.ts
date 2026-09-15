@@ -40,6 +40,7 @@ interface SummaryResponse {
   current_streak: { state: "active" | "idle"; started_at: number } | null;
   goal: { text: string; created_at: number; deadline_at: number } | null;
   messages: { message_id: string; kind: string; text: string; created_at: number }[];
+  app_usage: { app: string; secs: number }[];
 }
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
@@ -59,6 +60,7 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
       text: m.text,
       createdAt: m.created_at,
     })),
+    appUsage: r.app_usage.map((a) => ({ app: a.app, secs: a.secs })),
   };
 }
 

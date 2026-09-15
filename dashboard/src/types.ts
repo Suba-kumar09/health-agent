@@ -26,6 +26,11 @@ export interface NudgeMessage {
   createdAt: number; // unix seconds
 }
 
+export interface AppUsage {
+  app: string;
+  secs: number;
+}
+
 export interface DashboardSummary {
   deviceName: string | null; // null if the employee is registered but no device has enrolled yet
   employeeName: string;
@@ -37,6 +42,7 @@ export interface DashboardSummary {
   } | null;
   goal: GoalSummary | null;
   messages: NudgeMessage[];
+  appUsage: AppUsage[];
 }
 
 export interface DayHistoryEntry {
