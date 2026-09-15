@@ -1,0 +1,76 @@
+.message-feed {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.message-feed__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+}
+
+.message-feed__empty {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin: 0;
+}
+
+.message-feed__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.message-feed__item {
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--gridline);
+}
+
+.message-feed__item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.message-feed__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+}
+
+.message-feed__kind::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.message-feed__kind--break::before {
+  background: var(--series-1);
+}
+
+.message-feed__kind--distraction::before {
+  background: var(--series-2);
+}
+
+.message-feed__text {
+  margin: 6px 0 4px;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.message-feed__time {
+  font-size: 12px;
+  color: var(--text-muted);
+}
