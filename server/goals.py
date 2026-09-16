@@ -171,7 +171,7 @@ def generate_distraction_reminder_for_device(
         logger.warning("Distraction message generation failed for device %s: %s", device.device_id, exc)
         return None
 
-    message = Message(device_id=device.device_id, text=text, kind="distraction")
+    message = Message(device_id=device.device_id, text=text, kind="distraction", label=label)
     session.add(message)
     session.flush()
     return message

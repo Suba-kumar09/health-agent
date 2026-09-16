@@ -1,6 +1,8 @@
 .stat-tile {
   background: var(--surface-1);
+  box-shadow: var(--card-shadow);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--tile-accent, var(--border));
   border-radius: 12px;
   padding: 16px 18px;
   display: flex;
@@ -13,16 +15,30 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 16px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
-.stat-tile__icon {
+.stat-tile__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat-tile__icon-badge {
   display: inline-flex;
-  color: var(--text-muted);
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tile-accent, var(--text-muted)) 18%, transparent);
+  color: var(--tile-accent, var(--text-muted));
 }
 
 .stat-tile__value {

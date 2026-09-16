@@ -1,14 +1,18 @@
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./layout/Sidebar";
+import { Header } from "./layout/Header";
 import "./App.css";
 
 function App() {
   return (
     <div className="shell">
       <Sidebar />
-      <main className="page-content">
-        <Outlet />
-      </main>
+      <div className="shell__content">
+        <Header />
+        <main className="page-content">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

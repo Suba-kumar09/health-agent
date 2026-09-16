@@ -1,5 +1,5 @@
 import { API_BASE, SYSTEM_NAME } from "./config";
-import type { ConsentSettings, DashboardSummary, DayHistoryEntry, GoalHistoryEntry } from "./types";
+import type { ConsentSettings, DashboardSummary, DayHistoryEntry, GoalHistoryEntry, MessageKind } from "./types";
 import { buildMockConsentSettings } from "./mockData";
 
 export class DashboardApiError extends Error {}
@@ -36,10 +36,10 @@ interface SummaryResponse {
   device_name: string | null;
   employee_name: string;
   now: number;
-  today_segments: { state: "active" | "idle"; start_ts: number; end_ts: number }[];
+  today_segments: { state: "active" | "idle" | "locked"; start_ts: number; end_ts: number }[];
   current_streak: { state: "active" | "idle"; started_at: number } | null;
   goal: { text: string; created_at: number; deadline_at: number } | null;
-  messages: { message_id: string; kind: string; text: string; created_at: number }[];
+  messages: { message_id: string; kind: string; text: string; created_at: number; label: string | null }[];
   app_usage: { app: string; secs: number }[];
 }
 
@@ -52,13 +52,15 @@ export async function fetchDashboardSummary(): Promise<DashboardSummary> {
     todaySegments: r.today_segments.map((s) => ({ state: s.state, startTs: s.start_ts, endTs: s.end_ts })),
     currentStreak: r.current_streak ? { state: r.current_streak.state, startedAt: r.current_streak.started_at } : null,
     goal: r.goal ? { text: r.goal.text, createdAt: r.goal.created_at, deadlineAt: r.goal.deadline_at } : null,
-    // kind is a free-form str server-side (Message.kind); "break"/"distraction" are the
-    // only values anything ever writes today (server/wellbeing.py, server/goals.py).
+    // kind is a free-form str server-side (Message.kind); "break", "distraction",
+    // and "idle" are the only values anything writes today (server/wellbeing.py,
+    // server/goals.py, server/productivity.py).
     messages: r.messages.map((m) => ({
       messageId: m.message_id,
-      kind: m.kind as "break" | "distraction",
+      kind: m.kind as MessageKind,
       text: m.text,
       createdAt: m.created_at,
+      label: m.label,
     })),
     appUsage: r.app_usage.map((a) => ({ app: a.app, secs: a.secs })),
   };
@@ -68,12 +70,21 @@ interface HistoryEntryResponse {
   date: string;
   active_secs: number;
   idle_secs: number;
+  locked_secs: number;
+  distraction_secs: number;
   top_app: string | null;
 }
 
 export async function fetchHistory(): Promise<DayHistoryEntry[]> {
   const r = await apiGet<HistoryEntryResponse[]>("/v1/me/history", { days: 14 });
-  return r.map((e) => ({ date: e.date, activeSecs: e.active_secs, idleSecs: e.idle_secs, topApp: e.top_app }));
+  return r.map((e) => ({
+    date: e.date,
+    activeSecs: e.active_secs,
+    idleSecs: e.idle_secs,
+    lockedSecs: e.locked_secs,
+    distractionSecs: e.distraction_secs,
+    topApp: e.top_app,
+  }));
 }
 
 interface GoalEntryResponse {

@@ -1,5 +1,6 @@
 .goal-progress {
   background: var(--surface-1);
+  box-shadow: var(--card-shadow);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 18px 20px;
@@ -13,10 +14,17 @@
 }
 
 .goal-progress__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0;
+}
+
+.goal-progress__title svg {
+  color: var(--accent);
 }
 
 .goal-progress__badge {

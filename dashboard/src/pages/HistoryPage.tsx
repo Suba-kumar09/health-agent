@@ -56,6 +56,7 @@ export function HistoryPage() {
           <span>Date</span>
           <span>Active</span>
           <span>Idle</span>
+          <span>Distraction</span>
           <span>Top app</span>
         </div>
         {reversed.map((e) => (
@@ -63,6 +64,9 @@ export function HistoryPage() {
             <span>{fullDateLabel(e.date)}</span>
             <span>{formatDuration(e.activeSecs)}</span>
             <span>{formatDuration(e.idleSecs)}</span>
+            <span className={e.distractionSecs > 0 ? "history-table__distraction" : undefined}>
+              {e.distractionSecs > 0 ? formatDuration(e.distractionSecs) : "—"}
+            </span>
             <span>{e.topApp ?? "—"}</span>
           </div>
         ))}

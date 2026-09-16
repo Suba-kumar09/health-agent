@@ -3,7 +3,7 @@
 // See server/models.py (Event, Goal, Message) and server/wellbeing.py /
 // server/goals.py (streak + nudge logic) on the `openai-agents` branch.
 
-export type ActivityState = "active" | "idle";
+export type ActivityState = "active" | "idle" | "locked";
 
 export interface ActivitySegment {
   state: ActivityState;
@@ -17,13 +17,14 @@ export interface GoalSummary {
   deadlineAt: number; // unix seconds
 }
 
-export type MessageKind = "break" | "distraction";
+export type MessageKind = "break" | "distraction" | "idle";
 
 export interface NudgeMessage {
   messageId: string;
   kind: MessageKind;
   text: string;
   createdAt: number; // unix seconds
+  label: string | null; // window/tab title the message was about; only ever set for kind="distraction"
 }
 
 export interface AppUsage {
@@ -49,6 +50,8 @@ export interface DayHistoryEntry {
   date: string; // YYYY-MM-DD
   activeSecs: number;
   idleSecs: number;
+  lockedSecs: number;
+  distractionSecs: number;
   topApp: string | null;
 }
 

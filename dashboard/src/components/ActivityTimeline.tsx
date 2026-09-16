@@ -24,19 +24,23 @@ export function ActivityTimeline({ segments, now }: ActivityTimelineProps) {
           <span className="timeline__legend-item">
             <span className="timeline__swatch timeline__swatch--idle" /> Idle
           </span>
+          <span className="timeline__legend-item">
+            <span className="timeline__swatch timeline__swatch--locked" /> Locked
+          </span>
         </div>
       </div>
 
-      <div className="timeline__track" role="img" aria-label="Today's active and idle periods">
+      <div className="timeline__track" role="img" aria-label="Today's active, idle, and locked periods">
         {segments.map((seg, i) => {
           const left = ((seg.startTs - dayStart) / span) * 100;
           const width = Math.max(0.4, ((seg.endTs - seg.startTs) / span) * 100);
+          const label = seg.state === "active" ? "Active" : seg.state === "locked" ? "Locked" : "Idle";
           return (
             <div
               key={i}
               className={`timeline__segment timeline__segment--${seg.state}`}
               style={{ left: `${left}%`, width: `${width}%` }}
-              title={`${seg.state === "active" ? "Active" : "Idle"}: ${formatClock(seg.startTs)}–${formatClock(seg.endTs)}`}
+              title={`${label}: ${formatClock(seg.startTs)}–${formatClock(seg.endTs)}`}
             />
           );
         })}

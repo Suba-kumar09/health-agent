@@ -20,8 +20,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from server.auth import resolve_employee_by_system_name
+from server.config import get_settings
 from server.db import get_session
-from server.goals import current_goal
+from server.goals import _is_distracting, current_goal
 from server.models import Device, Event, Goal, Message
 from server.productivity import continuous_idle_streak
 from server.wellbeing import continuous_active_streak
@@ -31,8 +32,16 @@ router = APIRouter(prefix="/v1/me")
 _DAY_SECS = 86400
 
 
+def _afk_state(raw_state: str | None) -> Literal["active", "idle", "locked"]:
+    if raw_state == "active":
+        return "active"
+    if raw_state == "locked":
+        return "locked"
+    return "idle"
+
+
 class ActivitySegmentOut(BaseModel):
-    state: Literal["active", "idle"]
+    state: Literal["active", "idle", "locked"]
     start_ts: float
     end_ts: float
 
@@ -53,6 +62,7 @@ class NudgeMessageOut(BaseModel):
     kind: str
     text: str
     created_at: float
+    label: str | None = None
 
 
 class AppUsageOut(BaseModel):
@@ -75,6 +85,8 @@ class DayHistoryEntryOut(BaseModel):
     date: str
     active_secs: float
     idle_secs: float
+    locked_secs: float
+    distraction_secs: float
     top_app: str | None
 
 
@@ -132,7 +144,7 @@ def get_summary(
         )
         today_segments = [
             ActivitySegmentOut(
-                state="active" if e.data.get("state") == "active" else "idle",
+                state=_afk_state(e.data.get("state")),
                 start_ts=e.ts,
                 end_ts=e.ts + (e.duration or 0.0),
             )
@@ -155,7 +167,7 @@ def get_summary(
             .all()
         )
         messages = [
-            NudgeMessageOut(message_id=m.message_id, kind=m.kind, text=m.text, created_at=m.created_at)
+            NudgeMessageOut(message_id=m.message_id, kind=m.kind, text=m.text, created_at=m.created_at, label=m.label)
             for m in message_rows
         ]
 
@@ -173,7 +185,12 @@ def get_summary(
         )
         app_secs: dict[str, float] = {}
         for e in window_events:
-            label = e.data.get("app") or e.data.get("title") or e.data.get("url")
+            # Same title-first precedence as goals._distraction_label, not
+            # app-first -- so a browser tab's bucket key here matches exactly
+            # what a distraction Message.label would be for the same event,
+            # letting the dashboard correlate a slice to its messages by
+            # simple equality instead of fragile substring matching.
+            label = e.data.get("title") or e.data.get("url") or e.data.get("app")
             if not label:
                 continue
             app_secs[label] = app_secs.get(label, 0.0) + (e.duration or 0.0)
@@ -210,10 +227,12 @@ def get_history(
     employee = _resolve_employee_or_404(session, system_name)
     device = _latest_device(session, employee.employee_id)
 
+    settings = get_settings()
     today = datetime.now(UTC).date()
     day_list = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
-    by_day: dict[date, dict[str, float]] = {d: {"active": 0.0, "idle": 0.0} for d in day_list}
+    by_day: dict[date, dict[str, float]] = {d: {"active": 0.0, "idle": 0.0, "locked": 0.0} for d in day_list}
     top_app_secs: dict[date, dict[str, float]] = {d: {} for d in day_list}
+    distraction_secs: dict[date, float] = {d: 0.0 for d in day_list}
 
     if device is not None:
         window_start = time.mktime(day_list[0].timetuple())
@@ -230,8 +249,7 @@ def get_history(
             bucket = by_day.get(d)
             if bucket is None:
                 continue
-            key = "active" if e.data.get("state") == "active" else "idle"
-            bucket[key] += e.duration or 0.0
+            bucket[_afk_state(e.data.get("state"))] += e.duration or 0.0
 
         window_events = (
             session.execute(
@@ -254,6 +272,8 @@ def get_history(
             if not label:
                 continue
             apps[label] = apps.get(label, 0.0) + (e.duration or 0.0)
+            if _is_distracting(e.data, settings.distraction_keywords, settings.distraction_exempt_keywords):
+                distraction_secs[d] += e.duration or 0.0
 
     entries = []
     for d in day_list:
@@ -264,6 +284,8 @@ def get_history(
                 date=d.isoformat(),
                 active_secs=by_day[d]["active"],
                 idle_secs=by_day[d]["idle"],
+                locked_secs=by_day[d]["locked"],
+                distraction_secs=distraction_secs[d],
                 top_app=top_app,
             )
         )

@@ -7,6 +7,14 @@ def is_wayland() -> bool:
     return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland" or bool(os.environ.get("WAYLAND_DISPLAY"))
 
 
+def is_workstation_locked() -> bool:
+    """Not implemented on Linux (unverified platform, no test machine --
+    see CLAUDE.md; screen-lock detection is also desktop-environment-specific
+    via D-Bus, e.g. org.freedesktop.ScreenSaver, unlike Windows' single API).
+    Always reports unlocked rather than guessing."""
+    return False
+
+
 def get_active_window() -> dict | None:
     """X11 only -- Wayland has no equivalent cross-desktop active-window API.
 

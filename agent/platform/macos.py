@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 
+def is_workstation_locked() -> bool:
+    """Not implemented on macOS (unverified platform, no test machine --
+    see CLAUDE.md); always reports unlocked rather than guessing."""
+    return False
+
+
 def get_active_window() -> dict | None:
     """Requires Accessibility + Screen-Recording permission for the window title;
 

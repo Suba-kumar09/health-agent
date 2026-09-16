@@ -13,6 +13,13 @@ export function formatClock(ts: number): string {
   });
 }
 
+export function formatHeaderDate(date: Date): { day: string; time: string } {
+  return {
+    day: date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" }),
+    time: date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+  };
+}
+
 export function formatRelativeTime(ts: number, now: number): string {
   const diff = Math.max(0, now - ts);
   if (diff < 60) return "just now";

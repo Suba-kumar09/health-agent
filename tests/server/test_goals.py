@@ -208,6 +208,7 @@ def test_generate_persists_message_with_no_goal(db_session, monkeypatch):
     assert result is not None
     assert result.kind == "distraction"
     assert result.text == "stop watching hero movie and get back to work!"
+    assert result.label == "Hero Movie - YouTube"  # so the dashboard can correlate this message to its app-usage slice
     assert "stated goal" not in captured_prompt["value"]  # no-goal prompt template, not the goal-aware one
     assert "Hero Movie - YouTube" in captured_prompt["value"]
 

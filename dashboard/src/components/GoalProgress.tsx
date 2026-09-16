@@ -1,5 +1,6 @@
 import type { GoalSummary } from "../types";
 import { formatDuration } from "../format";
+import { TargetIcon } from "./icons";
 import "./GoalProgress.css";
 
 interface GoalProgressProps {
@@ -21,7 +22,10 @@ export function GoalProgress({ goal, now }: GoalProgressProps) {
   return (
     <div className="goal-progress">
       <div className="goal-progress__header">
-        <h2 className="goal-progress__title">Today's goal</h2>
+        <h2 className="goal-progress__title">
+          <TargetIcon size={15} />
+          Today's goal
+        </h2>
         {status && (
           <span className={`goal-progress__badge goal-progress__badge--${status}`}>
             <span className="goal-progress__badge-dot" aria-hidden="true" />

@@ -1,5 +1,6 @@
 .app-usage-chart {
   background: var(--surface-1);
+  box-shadow: var(--card-shadow);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 16px 18px;
@@ -14,7 +15,11 @@
 }
 
 .app-usage-chart__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
+  flex-shrink: 0;
   font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
@@ -22,11 +27,18 @@
   color: var(--text-secondary);
 }
 
+.app-usage-chart__title svg {
+  color: var(--accent);
+}
+
 .app-usage-chart__readout {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
   color: var(--text-primary);
   text-align: right;
-  white-space: nowrap;
 }
 
 .app-usage-chart__readout-hint {
@@ -45,16 +57,45 @@
   gap: 20px;
 }
 
-.app-usage-chart__donut {
-  width: 96px;
-  height: 96px;
+.app-usage-chart__donut-wrap {
+  position: relative;
+  width: 140px;
+  height: 140px;
   flex-shrink: 0;
+}
+
+.app-usage-chart__donut {
+  width: 140px;
+  height: 140px;
   transform: rotate(0deg);
+}
+
+.app-usage-chart__donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.app-usage-chart__donut-center strong {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.app-usage-chart__donut-center span {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .app-usage-chart__slice {
   cursor: pointer;
-  transition: stroke-width 0.15s ease;
+  transition: stroke-width 0.15s ease, stroke-opacity 0.15s ease;
 }
 
 .app-usage-chart__legend {
@@ -76,11 +117,16 @@
   padding: 3px 6px;
   margin: 0 -6px;
   border-radius: 6px;
-  cursor: default;
+  cursor: pointer;
 }
 
 .app-usage-chart__legend-row--hovered {
   background: var(--page-plane);
+}
+
+.app-usage-chart__legend-row--selected {
+  background: var(--page-plane);
+  outline: 1px solid var(--border);
 }
 
 .app-usage-chart__legend-dot {
@@ -101,4 +147,43 @@
 .app-usage-chart__legend-time {
   color: var(--text-secondary);
   flex-shrink: 0;
+}
+
+.app-usage-chart__detail {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--gridline);
+}
+
+.app-usage-chart__detail-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.app-usage-chart__detail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.app-usage-chart__detail-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-usage-chart__detail-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.app-usage-chart__detail-time {
+  font-size: 11px;
+  color: var(--text-muted);
 }

@@ -95,6 +95,13 @@ class Message(Base):
     kind: Mapped[str] = mapped_column(String, default="break", server_default="break")
     created_at: Mapped[float] = mapped_column(Float, default=time.time)
     delivered_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The window/tab title (or app/url fallback -- see goals._distraction_label)
+    # this message was generated about, e.g. a "distraction" message's actual
+    # YouTube tab title. Only ever set by server/goals.py today; null for
+    # break/idle messages, which aren't about any one app. Lets the dashboard
+    # correlate a distraction message back to a specific app-usage slice
+    # without fragile substring-matching against the free-text `text`.
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class Goal(Base):

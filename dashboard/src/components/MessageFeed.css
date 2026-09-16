@@ -1,15 +1,37 @@
 .message-feed {
   background: var(--surface-1);
+  box-shadow: var(--card-shadow);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 18px 20px;
 }
 
 .message-feed__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-primary);
   margin: 0 0 12px;
+}
+
+.message-feed__title svg {
+  color: var(--accent);
+}
+
+.message-feed__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .message-feed__empty {
@@ -21,10 +43,21 @@
 .message-feed__list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 4px 0 0;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.message-feed__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.message-feed__list::-webkit-scrollbar-thumb {
+  background: var(--gridline);
+  border-radius: 3px;
 }
 
 .message-feed__item {
@@ -61,6 +94,10 @@
 
 .message-feed__kind--distraction::before {
   background: var(--series-2);
+}
+
+.message-feed__kind--idle::before {
+  background: var(--series-4);
 }
 
 .message-feed__text {

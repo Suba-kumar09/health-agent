@@ -1,5 +1,6 @@
 import type { NudgeMessage } from "../types";
 import { formatRelativeTime } from "../format";
+import { BellIcon } from "./icons";
 import "./MessageFeed.css";
 
 interface MessageFeedProps {
@@ -10,12 +11,17 @@ interface MessageFeedProps {
 const KIND_LABEL: Record<NudgeMessage["kind"], string> = {
   break: "Break reminder",
   distraction: "Focus nudge",
+  idle: "Idle nudge",
 };
 
 export function MessageFeed({ messages, now }: MessageFeedProps) {
   return (
     <div className="message-feed">
-      <h2 className="message-feed__title">Recent nudges</h2>
+      <h2 className="message-feed__title">
+        <BellIcon size={15} />
+        Recent nudges
+        {messages.length > 0 && <span className="message-feed__count">{messages.length}</span>}
+      </h2>
       {messages.length === 0 ? (
         <p className="message-feed__empty">No nudges yet today.</p>
       ) : (

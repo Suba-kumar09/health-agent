@@ -3,6 +3,7 @@
   align-items: flex-start;
   gap: 10px;
   background: var(--surface-1);
+  box-shadow: var(--card-shadow);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 14px 16px;
