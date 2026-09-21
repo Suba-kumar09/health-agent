@@ -28,6 +28,7 @@ from agent.consent import (
 )
 from agent.crypto import FieldCipher, NullCipher
 from agent.secrets import SecretStore
+from agent.single_instance import AGENT_LOCK_PORT, InstanceLock
 from agent.storage import Event, Storage, run_retention
 from agent.sync.enroll import EnrollmentError, enroll
 from agent.sync.messages import MessagesPoller
@@ -174,6 +175,13 @@ def main(argv: list[str] | None = None) -> None:
         consent.log_detailed_mode_audit()
         logger.warning("detailed capture_mode is ACTIVE this session (audit-logged)")
 
+    # Held for the life of the process (released by the OS on exit/crash). Two
+    # agents on one machine both poll /v1/messages and both fire popups.
+    instance_lock = InstanceLock(AGENT_LOCK_PORT)
+    if not instance_lock.acquire():
+        logger.error("Another health-agent is already running on this machine -- exiting to avoid duplicate agents.")
+        return
+
     secret_store = SecretStore(fallback_dir=data_dir / "secrets")
     device_id = config.agent.device_id or get_or_create_local_device_id(secret_store)
     device_token = secret_store.get("device_token") or "unenrolled"  # real /v1/enroll flow: later milestone
@@ -292,14 +300,16 @@ def main(argv: list[str] | None = None) -> None:
     def stop_from_tray() -> None:
         stop_event.set()
 
-    tray = None
+    # Always built, even with --no-tray: popups go through the tray controller's
+    # Windows toast path, which doesn't need the tray icon itself. Only the
+    # icon (start()) is skipped for --no-tray.
+    tray = TrayController(
+        on_pause=pause_collectors,
+        on_resume=resume_collectors,
+        on_stop=stop_from_tray,
+        capture_mode=capture_mode,
+    )
     if not args.no_tray:
-        tray = TrayController(
-            on_pause=pause_collectors,
-            on_resume=resume_collectors,
-            on_stop=stop_from_tray,
-            capture_mode=capture_mode,
-        )
         tray.start()
 
     if args.dry_run:
@@ -332,10 +342,9 @@ def main(argv: list[str] | None = None) -> None:
         token_provider=lambda: device_token,
     )
 
-    def on_wellbeing_message(text: str) -> None:
+    def on_wellbeing_message(text: str) -> bool:
         logger.info("Wellbeing message: %s", text)
-        if tray is not None:
-            tray.show_message(text)
+        return tray.show_message(text)
 
     messages_poller = MessagesPoller(
         http_client=http_client,
@@ -372,8 +381,7 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Shutting down: flushing collectors and buffer")
         for c in collectors:
             c.stop()
-        if tray is not None:
-            tray.stop()
+        tray.stop()
         scheduler.shutdown(wait=False)
         uploader.run_tick()  # final drain attempt before exit
         storage.close()

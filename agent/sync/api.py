@@ -57,3 +57,11 @@ class PendingMessage(BaseModel):
 
 class PendingMessagesResponse(BaseModel):
     messages: list[PendingMessage] = Field(default_factory=list)
+
+
+class AckMessagesRequest(BaseModel):
+    message_ids: list[str] = Field(default_factory=list)
+
+
+class AckMessagesResponse(BaseModel):
+    acknowledged: int

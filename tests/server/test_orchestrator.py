@@ -215,3 +215,41 @@ def test_disabled_agent_never_wins_routing(db_session, monkeypatch):
     result = route_device(db_session, device, _settings(wellbeing_enabled=False))
 
     assert result is None
+
+
+def test_unshown_recent_message_blocks_a_new_one(db_session, monkeypatch):
+    import time
+
+    device = _make_device(db_session)
+    _add_afk_event(db_session, "dev-1", ts=1000.0, state="active", duration=1900.0)
+    # Created a minute ago and never acked: the agent hasn't popped it yet.
+    db_session.add(
+        Message(
+            message_id=str(uuid.uuid4()), device_id="dev-1", text="pending", kind="idle", created_at=time.time() - 60
+        )
+    )
+    db_session.commit()
+    monkeypatch.setattr(
+        "server.wellbeing.call_llm",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not stack on an un-shown message")),
+    )
+
+    assert route_device(db_session, device, _settings()) is None
+
+
+def test_abandoned_message_does_not_block_forever(db_session, monkeypatch):
+    import time
+
+    device = _make_device(db_session)
+    _add_afk_event(db_session, "dev-1", ts=1000.0, state="active", duration=1900.0)
+    db_session.add(
+        Message(
+            message_id=str(uuid.uuid4()), device_id="dev-1", text="stale", kind="idle", created_at=time.time() - 3600
+        )
+    )
+    db_session.commit()
+    monkeypatch.setattr("server.wellbeing.call_llm", lambda *a, **k: "take a break")
+
+    result = route_device(db_session, device, _settings())
+
+    assert result is not None and result.kind == "break"

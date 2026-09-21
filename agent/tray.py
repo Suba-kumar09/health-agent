@@ -16,7 +16,9 @@ def _register_windows_app_identity() -> None:
     process -- no exception raised, nothing in Action Center, just nothing.
     Setting one is the standard fix; it must happen before the tray icon
     (and therefore any notify() call) is created, so this runs at the start
-    of TrayController.start() rather than lazily inside show_message()."""
+    of TrayController.start() rather than lazily inside show_message().
+    Also called from _show_windows_toast so an agent run with --no-tray (which
+    never calls start()) still gets an identity; setting it twice is harmless."""
     if platform.system() != "Windows":
         return
     try:
@@ -99,7 +101,7 @@ class TrayController:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
 
-    def show_message(self, text: str) -> None:
+    def show_message(self, text: str) -> bool:
         """Surfaces a wellbeing message as a native OS notification.
 
         On Windows, tries a real WinRT Toast first (see _show_windows_toast) --
@@ -110,16 +112,23 @@ class TrayController:
         (the only option on macOS/Linux, and the fallback on Windows too if
         windows-toasts isn't installed or the call fails for any reason), and
         finally to a log line if there's no tray at all (--no-tray) or the
-        backend doesn't support notify()."""
+        backend doesn't support notify().
+
+        Returns True if the message was surfaced (or there is genuinely no way
+        to show a popup here, so retrying would be pointless), False if a
+        display attempt failed -- MessagesPoller then leaves the message
+        un-acked so the server re-delivers it on the next poll."""
         if platform.system() == "Windows" and self._show_windows_toast(text):
-            return
+            return True
         if self._icon is None:
             logger.info("Wellbeing message (no tray): %s", text)
-            return
+            return True
         try:
             self._icon.notify(text, "Health Agent")
+            return True
         except NotImplementedError:  # pragma: no cover - not every backend supports notify()
             logger.info("Wellbeing message (notify unsupported): %s", text)
+            return True
         except Exception:
             # notify() reaching the OS shell call doesn't guarantee a toast
             # actually appears (Focus Assist / per-app notification settings
@@ -127,6 +136,7 @@ class TrayController:
             # itself throws, that's a real bug and was previously swallowed
             # silently here, making this exact failure mode undiagnosable.
             logger.exception("Failed to show wellbeing notification: %s", text)
+            return False
 
     def _show_windows_toast(self, text: str) -> bool:
         """Tries to show `text` as a real WinRT Toast notification. Returns
@@ -141,6 +151,7 @@ class TrayController:
             # a toast filed under a different, unregistered id is silently
             # accepted (lands in Action Center, no exception) but Windows
             # refuses to pop the banner for it.
+            _register_windows_app_identity()
             toaster = WindowsToaster(_WINDOWS_APP_USER_MODEL_ID)
             toast = Toast()
             toast.text_fields = [text]

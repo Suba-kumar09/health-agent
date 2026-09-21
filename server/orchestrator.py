@@ -31,6 +31,7 @@ the LLM is only ever invoked for the one agent that actually wins routing
 from __future__ import annotations
 
 import logging
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -50,6 +51,29 @@ _NOTIFIER = "break"
 
 # Order matters -- first match wins. See module docstring.
 _PRIORITY = (_DISTRACTION, _PRODUCTIVITY, _NOTIFIER)
+
+# A message still un-acked after this long is treated as abandoned (agent
+# offline, or its popup keeps failing) and stops blocking new messages.
+_PENDING_BLOCK_SECS = 600
+
+
+def _has_pending_message(session: Session, device_id: str) -> bool:
+    """True if the device already has a recent message it hasn't shown yet.
+    Sending another one on top would just stack popups when the agent finally
+    catches up (or the popup is being suppressed by Focus Assist)."""
+    cutoff = time.time() - _PENDING_BLOCK_SECS
+    return (
+        session.execute(
+            select(Message.message_id)
+            .where(
+                Message.device_id == device_id,
+                Message.delivered_at.is_(None),
+                Message.created_at >= cutoff,
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
 
 
 def _candidate(kind: str, session: Session, device: Device, settings) -> bool:
@@ -116,13 +140,16 @@ def route_device(session: Session, device: Device, settings) -> Message | None:
     if winner is None:
         return None
 
-    if settings.policy_enabled and not policy.is_allowed(
-        session,
-        device.device_id,
-        settings.policy_cooldown_secs,
-        settings.policy_daily_message_limit,
-        settings.policy_quiet_hours_start,
-        settings.policy_quiet_hours_end,
+    if settings.policy_enabled and (
+        _has_pending_message(session, device.device_id)
+        or not policy.is_allowed(
+            session,
+            device.device_id,
+            settings.policy_cooldown_secs,
+            settings.policy_daily_message_limit,
+            settings.policy_quiet_hours_start,
+            settings.policy_quiet_hours_end,
+        )
     ):
         return None
 

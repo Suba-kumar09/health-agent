@@ -3,6 +3,8 @@ not redefined, so the client and server can never drift on shape."""
 from __future__ import annotations
 
 from agent.sync.api import (
+    AckMessagesRequest,
+    AckMessagesResponse,
     EnrollRequest,
     EnrollResponse,
     IngestEvent,
@@ -14,6 +16,8 @@ from agent.sync.api import (
 )
 
 __all__ = [
+    "AckMessagesRequest",
+    "AckMessagesResponse",
     "EnrollRequest",
     "EnrollResponse",
     "IngestEvent",

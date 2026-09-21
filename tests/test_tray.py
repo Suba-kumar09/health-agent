@@ -98,3 +98,32 @@ def test_windows_toast_runtime_error_falls_back_to_tray_balloon(monkeypatch):
     controller.show_message("take a break")
 
     assert controller._icon.notified == [("take a break", "Health Agent")]
+
+
+def test_show_message_returns_true_when_surfaced(monkeypatch):
+    controller = _make_controller()
+    controller._icon = _FakeIcon()
+    monkeypatch.setattr("agent.tray.platform.system", lambda: "Darwin")
+
+    assert controller.show_message("take a break") is True
+
+
+def test_show_message_returns_true_when_there_is_no_tray(monkeypatch):
+    controller = _make_controller()
+    monkeypatch.setattr("agent.tray.platform.system", lambda: "Darwin")
+
+    assert controller.show_message("take a break") is True  # nothing more can be tried; don't retry forever
+
+
+def test_show_message_returns_false_when_every_display_path_fails(monkeypatch):
+    controller = _make_controller()
+    monkeypatch.setattr("agent.tray.platform.system", lambda: "Windows")
+    monkeypatch.setitem(sys.modules, "windows_toasts", None)  # toast unavailable
+
+    class _BrokenIcon:
+        def notify(self, text, title):
+            raise RuntimeError("shell call failed")
+
+    controller._icon = _BrokenIcon()
+
+    assert controller.show_message("take a break") is False  # poller must leave it un-acked
