@@ -25,6 +25,27 @@ class Employee(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     system_name: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     created_at: Mapped[float] = mapped_column(Float, default=time.time)
+    # Dashboard login (server/dashboard_auth.py). An employee with no
+    # password_hash simply can't log in yet -- set one via
+    # `python -m server.admin_cli set-login`. `email` is an optional second
+    # login identifier alongside system_name.
+    email: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    role: Mapped[str] = mapped_column(String, default="employee", server_default="employee", nullable=False)
+
+
+class DashboardSession(Base):
+    """A logged-in dashboard session. Only a sha256 of the bearer token is
+    stored (same discipline as Device.device_token_hash), so a leaked DB
+    doesn't leak usable sessions; deleting the row is an instant logout."""
+
+    __tablename__ = "dashboard_sessions"
+
+    session_id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    token_hash: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    employee_id: Mapped[str] = mapped_column(String, ForeignKey("employees.employee_id"), nullable=False, index=True)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)
+    expires_at: Mapped[float] = mapped_column(Float, nullable=False)
 
 
 class Device(Base):

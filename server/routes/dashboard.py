@@ -1,54 +1,41 @@
-"""Read-only endpoints for the dashboard/ frontend.
-
-No auth/session system exists anywhere in this project yet (see CLAUDE.md) --
-these endpoints reuse the same identification the /goal form already relies
-on (server/routes/goals.py): a `system_name` query param matched
-case-insensitively against Employee.system_name via
-auth.resolve_employee_by_system_name, i.e. the machine's real hostname. This
-is not authentication, just lookup, same as the existing form -- do not
-treat it as a security boundary.
+"""Employee dashboard endpoints ("My dashboard"). Every route requires a
+logged-in dashboard session (server/dashboard_auth.py) and only ever returns
+the logged-in employee's own data -- there is no parameter to ask for anyone
+else's. Admins read other employees through /v1/admin/* instead.
 """
 from __future__ import annotations
 
 import time
-from datetime import UTC, date, datetime, timedelta
-from typing import Literal
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from server.auth import resolve_employee_by_system_name
+from server.activity import build_segments, load_events, state_totals, window_totals
 from server.config import get_settings
+from server.dashboard_auth import current_employee
+from server.dashboard_views import (
+    HourOut,
+    MessageOut,
+    SegmentOut,
+    StatusOut,
+    TotalsOut,
+    WindowOut,
+    current_status,
+    employee_devices,
+    hour_blocks,
+    local_midnight,
+    recent_messages,
+    segment_out,
+    totals_out,
+    window_out,
+)
 from server.db import get_session
-from server.goals import _is_distracting, current_goal
-from server.models import Device, Event, Goal, Message
-from server.productivity import continuous_idle_streak
-from server.wellbeing import continuous_active_streak
+from server.goals import current_goal
+from server.models import Employee, Goal
 
 router = APIRouter(prefix="/v1/me")
-
-_DAY_SECS = 86400
-
-
-def _afk_state(raw_state: str | None) -> Literal["active", "idle", "locked"]:
-    if raw_state == "active":
-        return "active"
-    if raw_state == "locked":
-        return "locked"
-    return "idle"
-
-
-class ActivitySegmentOut(BaseModel):
-    state: Literal["active", "idle", "locked"]
-    start_ts: float
-    end_ts: float
-
-
-class CurrentStreakOut(BaseModel):
-    state: Literal["active", "idle"]
-    started_at: float
 
 
 class GoalOut(BaseModel):
@@ -57,256 +44,132 @@ class GoalOut(BaseModel):
     deadline_at: float
 
 
-class NudgeMessageOut(BaseModel):
-    message_id: str
-    kind: str
-    text: str
-    created_at: float
-    label: str | None = None
-
-
-class AppUsageOut(BaseModel):
+class AppOut(BaseModel):
     app: str
     secs: float
+    windows: list[WindowOut] = Field(default_factory=list)
 
 
-class DashboardSummaryOut(BaseModel):
-    device_name: str | None
-    employee_name: str
+class TodayOut(BaseModel):
     now: float
-    today_segments: list[ActivitySegmentOut] = Field(default_factory=list)
-    current_streak: CurrentStreakOut | None = None
-    goal: GoalOut | None = None
-    messages: list[NudgeMessageOut] = Field(default_factory=list)
-    app_usage: list[AppUsageOut] = Field(default_factory=list)
+    day_start: float
+    workday_secs: float
+    employee_name: str
+    device_name: str | None
+    status: StatusOut
+    totals: TotalsOut
+    segments: list[SegmentOut]
+    hours: list[HourOut]
+    apps: list[AppOut]
+    goal: GoalOut | None
+    messages: list[MessageOut]
 
 
-class DayHistoryEntryOut(BaseModel):
-    date: str
-    active_secs: float
-    idle_secs: float
-    locked_secs: float
-    distraction_secs: float
-    top_app: str | None
+class DayOut(BaseModel):
+    date: str  # YYYY-MM-DD, local
+    day_start: float
+    totals: TotalsOut
+    top_windows: list[WindowOut]
+    flagged_windows: list[WindowOut]
 
 
-class GoalHistoryEntryOut(BaseModel):
-    goal_id: str
-    text: str
-    created_at: float
-    deadline_at: float
+class SetGoalRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=300)
+    hours: float = Field(gt=0, le=24 * 14)
 
 
-def _resolve_employee_or_404(session: Session, system_name: str):
-    employee = resolve_employee_by_system_name(session, system_name)
-    if employee is None:
-        raise HTTPException(status_code=404, detail=f"system '{system_name}' is not a registered employee machine")
-    return employee
+def _goal_out(goal: Goal | None) -> GoalOut | None:
+    return GoalOut(text=goal.text, created_at=goal.created_at, deadline_at=goal.deadline_at) if goal else None
 
 
-def _latest_device(session: Session, employee_id: str) -> Device | None:
-    return (
-        session.execute(
-            select(Device)
-            .where(Device.employee_id == employee_id)
-            .order_by(func.coalesce(Device.last_seen_at, Device.enrolled_at).desc())
-            .limit(1)
-        )
-        .scalars()
-        .first()
-    )
-
-
-@router.get("/summary", response_model=DashboardSummaryOut)
-def get_summary(
-    system_name: str = Query(...),
-    session: Session = Depends(get_session),
-) -> DashboardSummaryOut:
-    employee = _resolve_employee_or_404(session, system_name)
-    device = _latest_device(session, employee.employee_id)
-    now = time.time()
-
-    today_segments: list[ActivitySegmentOut] = []
-    current_streak: CurrentStreakOut | None = None
-    messages: list[NudgeMessageOut] = []
-    app_usage: list[AppUsageOut] = []
-
-    if device is not None:
-        window_start = now - _DAY_SECS
-        afk_events = (
-            session.execute(
-                select(Event)
-                .where(Event.device_id == device.device_id, Event.collector == "afk", Event.ts >= window_start)
-                .order_by(Event.ts)
-            )
-            .scalars()
-            .all()
-        )
-        today_segments = [
-            ActivitySegmentOut(
-                state=_afk_state(e.data.get("state")),
-                start_ts=e.ts,
-                end_ts=e.ts + (e.duration or 0.0),
-            )
-            for e in afk_events
-        ]
-
-        active = continuous_active_streak(session, device.device_id)
-        if active is not None:
-            current_streak = CurrentStreakOut(state="active", started_at=active[1])
-        else:
-            idle = continuous_idle_streak(session, device.device_id)
-            if idle is not None:
-                current_streak = CurrentStreakOut(state="idle", started_at=idle[1])
-
-        message_rows = (
-            session.execute(
-                select(Message).where(Message.device_id == device.device_id).order_by(Message.created_at.desc()).limit(10)
-            )
-            .scalars()
-            .all()
-        )
-        messages = [
-            NudgeMessageOut(message_id=m.message_id, kind=m.kind, text=m.text, created_at=m.created_at, label=m.label)
-            for m in message_rows
-        ]
-
-        window_events = (
-            session.execute(
-                select(Event)
-                .where(
-                    Event.device_id == device.device_id,
-                    Event.collector.in_(("window_watcher", "browser_bridge")),
-                    Event.ts >= window_start,
-                )
-            )
-            .scalars()
-            .all()
-        )
-        app_secs: dict[str, float] = {}
-        for e in window_events:
-            # Same title-first precedence as goals._distraction_label, not
-            # app-first -- so a browser tab's bucket key here matches exactly
-            # what a distraction Message.label would be for the same event,
-            # letting the dashboard correlate a slice to its messages by
-            # simple equality instead of fragile substring matching.
-            label = e.data.get("title") or e.data.get("url") or e.data.get("app")
-            if not label:
-                continue
-            app_secs[label] = app_secs.get(label, 0.0) + (e.duration or 0.0)
-        app_usage = [
-            AppUsageOut(app=label, secs=secs)
-            for label, secs in sorted(app_secs.items(), key=lambda kv: kv[1], reverse=True)[:8]
-        ]
-
-    goal_row = current_goal(session, employee.employee_id)
-    goal = (
-        GoalOut(text=goal_row.text, created_at=goal_row.created_at, deadline_at=goal_row.deadline_at)
-        if goal_row is not None
-        else None
-    )
-
-    return DashboardSummaryOut(
-        device_name=device.device_name if device is not None else None,
-        employee_name=employee.name,
-        now=now,
-        today_segments=today_segments,
-        current_streak=current_streak,
-        goal=goal,
-        messages=messages,
-        app_usage=app_usage,
-    )
-
-
-@router.get("/history", response_model=list[DayHistoryEntryOut])
-def get_history(
-    system_name: str = Query(...),
-    days: int = Query(14, ge=1, le=90),
-    session: Session = Depends(get_session),
-) -> list[DayHistoryEntryOut]:
-    employee = _resolve_employee_or_404(session, system_name)
-    device = _latest_device(session, employee.employee_id)
-
+@router.get("/today", response_model=TodayOut)
+def get_today(employee: Employee = Depends(current_employee), session: Session = Depends(get_session)) -> TodayOut:
     settings = get_settings()
-    today = datetime.now(UTC).date()
-    day_list = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
-    by_day: dict[date, dict[str, float]] = {d: {"active": 0.0, "idle": 0.0, "locked": 0.0} for d in day_list}
-    top_app_secs: dict[date, dict[str, float]] = {d: {} for d in day_list}
-    distraction_secs: dict[date, float] = {d: 0.0 for d in day_list}
+    now = time.time()
+    day_start = local_midnight(now)
+    devices = employee_devices(session, employee.employee_id)
+    device_ids = [d.device_id for d in devices]
 
-    if device is not None:
-        window_start = time.mktime(day_list[0].timetuple())
-        afk_events = (
-            session.execute(
-                select(Event)
-                .where(Event.device_id == device.device_id, Event.collector == "afk", Event.ts >= window_start)
-            )
-            .scalars()
-            .all()
-        )
-        for e in afk_events:
-            d = datetime.fromtimestamp(e.ts, tz=UTC).date()
-            bucket = by_day.get(d)
-            if bucket is None:
-                continue
-            bucket[_afk_state(e.data.get("state"))] += e.duration or 0.0
-
-        window_events = (
-            session.execute(
-                select(Event)
-                .where(
-                    Event.device_id == device.device_id,
-                    Event.collector.in_(("window_watcher", "browser_bridge")),
-                    Event.ts >= window_start,
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for e in window_events:
-            d = datetime.fromtimestamp(e.ts, tz=UTC).date()
-            apps = top_app_secs.get(d)
-            if apps is None:
-                continue
-            label = e.data.get("app") or e.data.get("title") or e.data.get("url")
-            if not label:
-                continue
-            apps[label] = apps.get(label, 0.0) + (e.duration or 0.0)
-            if _is_distracting(e.data, settings.distraction_keywords, settings.distraction_exempt_keywords):
-                distraction_secs[d] += e.duration or 0.0
-
-    entries = []
-    for d in day_list:
-        apps = top_app_secs[d]
-        top_app = max(apps, key=apps.get) if apps else None
-        entries.append(
-            DayHistoryEntryOut(
-                date=d.isoformat(),
-                active_secs=by_day[d]["active"],
-                idle_secs=by_day[d]["idle"],
-                locked_secs=by_day[d]["locked"],
-                distraction_secs=distraction_secs[d],
-                top_app=top_app,
-            )
-        )
-    return entries
-
-
-@router.get("/goals", response_model=list[GoalHistoryEntryOut])
-def get_goals(
-    system_name: str = Query(...),
-    limit: int = Query(20, ge=1, le=100),
-    session: Session = Depends(get_session),
-) -> list[GoalHistoryEntryOut]:
-    employee = _resolve_employee_or_404(session, system_name)
-    rows = (
-        session.execute(
-            select(Goal).where(Goal.employee_id == employee.employee_id).order_by(Goal.created_at.desc()).limit(limit)
-        )
-        .scalars()
-        .all()
+    events = load_events(session, device_ids, day_start, now)
+    segments = build_segments(
+        events, day_start, now, settings.distraction_keywords, settings.distraction_exempt_keywords
     )
-    return [
-        GoalHistoryEntryOut(goal_id=g.goal_id, text=g.text, created_at=g.created_at, deadline_at=g.deadline_at)
-        for g in rows
-    ]
+    status = current_status(
+        devices[0] if devices else None,
+        events,
+        segments,
+        now,
+        settings.dashboard_offline_after_secs,
+        settings.distraction_keywords,
+        settings.distraction_exempt_keywords,
+    )
+
+    by_app: dict[str, AppOut] = {}
+    for w in window_totals(segments):
+        app = by_app.setdefault(w.app, AppOut(app=w.app, secs=0.0))
+        app.secs += w.secs
+        if len(app.windows) < 25:
+            app.windows.append(window_out(w))
+    apps = sorted(by_app.values(), key=lambda a: a.secs, reverse=True)
+    for app in apps:
+        app.secs = round(app.secs, 1)
+
+    return TodayOut(
+        now=now,
+        day_start=day_start,
+        workday_secs=settings.workday_hours * 3600,
+        employee_name=employee.name,
+        device_name=devices[0].device_name if devices else None,
+        status=status,
+        totals=totals_out(state_totals(segments)),
+        segments=[segment_out(s) for s in segments],
+        hours=hour_blocks(
+            events, segments, day_start, now, settings.distraction_keywords, settings.distraction_exempt_keywords
+        ),
+        apps=apps[:10],
+        goal=_goal_out(current_goal(session, employee.employee_id)),
+        messages=recent_messages(session, device_ids, limit=20),
+    )
+
+
+@router.get("/week", response_model=list[DayOut])
+def get_week(employee: Employee = Depends(current_employee), session: Session = Depends(get_session)) -> list[DayOut]:
+    """The last 7 days including today, oldest first."""
+    settings = get_settings()
+    now = time.time()
+    today = datetime.fromtimestamp(local_midnight(now))
+    starts = [(today - timedelta(days=i)).timestamp() for i in range(6, -1, -1)]
+    device_ids = [d.device_id for d in employee_devices(session, employee.employee_id)]
+    events = load_events(session, device_ids, starts[0], now)
+
+    days = []
+    for i, start in enumerate(starts):
+        end = starts[i + 1] if i + 1 < len(starts) else now
+        segments = build_segments(
+            events, start, end, settings.distraction_keywords, settings.distraction_exempt_keywords
+        )
+        windows = window_totals(segments)
+        days.append(
+            DayOut(
+                date=datetime.fromtimestamp(start).date().isoformat(),
+                day_start=start,
+                totals=totals_out(state_totals(segments)),
+                top_windows=[window_out(w) for w in windows if not w.flag][:6],
+                flagged_windows=[window_out(w) for w in windows if w.flag][:6],
+            )
+        )
+    return days
+
+
+@router.post("/goal", response_model=GoalOut)
+def set_goal(
+    body: SetGoalRequest, employee: Employee = Depends(current_employee), session: Session = Depends(get_session)
+) -> GoalOut:
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="Write what the goal is.")
+    now = time.time()
+    goal = Goal(employee_id=employee.employee_id, text=text, created_at=now, deadline_at=now + body.hours * 3600)
+    session.add(goal)
+    session.commit()
+    return _goal_out(goal)

@@ -31,6 +31,37 @@ engine = make_engine()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
+def add_missing_sqlite_columns(bind, metadata) -> list[str]:
+    """Local-dev convenience for SQLite only: create_all() creates missing
+    *tables* but never adds new *columns* to a table that already exists, so
+    an older server_dev.db crashes with "no such column" after a model gains
+    a field. This adds each missing column (nullable, with its server default)
+    so an existing dev database keeps working. Postgres is never touched --
+    production schema changes go through Alembic. Returns what it added."""
+    from sqlalchemy import inspect, text
+
+    if bind.dialect.name != "sqlite":
+        return []
+    inspector = inspect(bind)
+    existing_tables = set(inspector.get_table_names())
+    added: list[str] = []
+    with bind.begin() as conn:
+        for table in metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            have = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in have:
+                    continue
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column.type.compile(bind.dialect)}'
+                default = column.server_default
+                if default is not None and isinstance(getattr(default, "arg", None), str):
+                    ddl += " DEFAULT '" + default.arg.replace("'", "''") + "'"
+                conn.execute(text(ddl))
+                added.append(f"{table.name}.{column.name}")
+    return added
+
+
 @contextmanager
 def session_scope(session_factory=SessionLocal):
     session = session_factory()

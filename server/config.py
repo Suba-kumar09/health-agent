@@ -58,6 +58,17 @@ class Settings:
     policy_quiet_hours_start: int
     policy_quiet_hours_end: int
     dashboard_origins: list[str] = field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"])
+    dashboard_session_ttl_hours: int = 12
+    # When False, admins see only app names (e.g. "Chrome"), never the
+    # window/tab titles -- employees always see their own titles. Lets an
+    # organization match whatever its employees actually agreed to.
+    admin_show_window_titles: bool = True
+    # A device that hasn't synced for this long counts as Offline on the
+    # admin dashboard (the agent syncs every ~15s when running).
+    dashboard_offline_after_secs: int = 180
+    # Length of the organization's working day; the dashboards show each
+    # person's tracked time against it ("5h 10m of 8h").
+    workday_hours: float = 8.0
 
 
 def get_settings() -> Settings:
@@ -108,4 +119,8 @@ def get_settings() -> Settings:
             for o in os.environ.get("DASHBOARD_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
             if o.strip()
         ],
+        dashboard_session_ttl_hours=_int_env("DASHBOARD_SESSION_TTL_HOURS", 12),
+        admin_show_window_titles=_bool_env("ADMIN_SHOW_WINDOW_TITLES", True),
+        dashboard_offline_after_secs=_int_env("DASHBOARD_OFFLINE_AFTER_SECS", 180),
+        workday_hours=float(os.environ.get("WORKDAY_HOURS") or 8),
     )

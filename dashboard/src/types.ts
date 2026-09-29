@@ -1,78 +1,134 @@
-// Shapes intentionally mirror the backend's real models so wiring this up to
-// a live endpoint later (see api.ts) is a data-source swap, not a rewrite.
-// See server/models.py (Event, Goal, Message) and server/wellbeing.py /
-// server/goals.py (streak + nudge logic) on the `openai-agents` branch.
+// Mirrors the server's response models (server/dashboard_views.py,
+// server/routes/dashboard.py, server/routes/admin.py, server/routes/auth.py).
+// Field names stay snake_case exactly as the API sends them.
 
-export type ActivityState = "active" | "idle" | "locked";
-
-export interface ActivitySegment {
-  state: ActivityState;
-  startTs: number; // unix seconds
-  endTs: number; // unix seconds
-}
-
-export interface GoalSummary {
-  text: string;
-  createdAt: number; // unix seconds
-  deadlineAt: number; // unix seconds
-}
-
+export type SegmentState = "active" | "distraction" | "idle" | "locked";
+export type Status = SegmentState | "offline" | "no_device";
 export type MessageKind = "break" | "distraction" | "idle";
 
-export interface NudgeMessage {
-  messageId: string;
+export interface Account {
+  employee_id: string;
+  name: string;
+  role: "admin" | "employee";
+  email: string | null;
+  system_name: string;
+}
+
+export interface WindowItem {
+  app: string;
+  title: string | null; // null when the organization hides titles from admins
+  site: string | null;
+  flag: string | null; // distraction keyword it matched, e.g. "youtube"
+  secs: number;
+}
+
+export interface Segment {
+  state: SegmentState;
+  start_ts: number;
+  end_ts: number;
+  windows: WindowItem[];
+}
+
+export interface Totals {
+  active: number;
+  distraction: number;
+  idle: number;
+  locked: number;
+}
+
+export interface HourBlock {
+  hour_start: number;
+  totals: Totals;
+  windows: WindowItem[];
+}
+
+export interface Message {
+  message_id: string;
   kind: MessageKind;
   text: string;
-  createdAt: number; // unix seconds
-  label: string | null; // window/tab title the message was about; only ever set for kind="distraction"
+  created_at: number;
+  label: string | null;
+  employee_id: string | null;
+  employee_name: string | null;
+}
+
+export interface StatusInfo {
+  status: Status;
+  since: number | null;
+  last_seen_at: number | null;
+  on_screen: WindowItem | null;
+}
+
+export interface Goal {
+  text: string;
+  created_at: number;
+  deadline_at: number;
 }
 
 export interface AppUsage {
   app: string;
   secs: number;
+  windows: WindowItem[];
 }
 
-export interface DashboardSummary {
-  deviceName: string | null; // null if the employee is registered but no device has enrolled yet
-  employeeName: string;
-  now: number; // unix seconds, server/mock clock
-  todaySegments: ActivitySegment[];
-  currentStreak: {
-    state: ActivityState;
-    startedAt: number;
-  } | null;
-  goal: GoalSummary | null;
-  messages: NudgeMessage[];
-  appUsage: AppUsage[];
+export interface Today {
+  now: number;
+  day_start: number;
+  workday_secs: number;
+  employee_name: string;
+  device_name: string | null;
+  status: StatusInfo;
+  totals: Totals;
+  segments: Segment[];
+  hours: HourBlock[];
+  apps: AppUsage[];
+  goal: Goal | null;
+  messages: Message[];
 }
 
-export interface DayHistoryEntry {
-  date: string; // YYYY-MM-DD
-  activeSecs: number;
-  idleSecs: number;
-  lockedSecs: number;
-  distractionSecs: number;
-  topApp: string | null;
+export interface Day {
+  date: string;
+  day_start: number;
+  totals: Totals;
+  top_windows: WindowItem[];
+  flagged_windows: WindowItem[];
 }
 
-// No "completed" flag exists server-side (see server/models.py's Goal
-// docstring - deliberate MVP scope), so a past goal can only be shown as
-// "in progress" or "overdue", never "met"/"missed" - the data to say which
-// doesn't exist.
-export interface GoalHistoryEntry {
-  goalId: string;
-  text: string;
-  createdAt: number;
-  deadlineAt: number;
+export interface EmployeeRow {
+  employee_id: string;
+  name: string;
+  email: string | null;
+  system_name: string;
+  role: string;
+  status: StatusInfo;
+  last_active_at: number | null;
+  totals: Totals;
 }
 
-// Mirrors agent/consent.py's separate basic/detailed flags and config.toml's
-// [collectors]/[privacy] tables - read-only here, this dashboard doesn't
-// change device-side settings.
-export interface ConsentSettings {
-  basicConsentedAt: number | null;
-  detailedConsentedAt: number | null;
-  captureMode: "aggregate" | "detailed";
-  encryptAtRest: boolean;
-  collectors: { name: string; label: string; enabled: boolean }[];
+export interface Site {
+  keyword: string;
+  name: string;
+  secs: number;
+  rows: { employee_id: string; employee_name: string; title: string | null; site: string | null; secs: number }[];
+}
+
+export interface Overview {
+  now: number;
+  day_start: number;
+  workday_secs: number;
+  show_titles: boolean;
+  kpis: { total: number; active: number; distraction: number; idle: number; offline: number };
+  employees: EmployeeRow[];
+  totals: Totals;
+  trend: { hour_start: number; active_secs: number }[];
+  distracting_sites: Site[];
+  messages: Message[];
+}
+
+export interface EmployeeDetail extends EmployeeRow {
+  show_titles: boolean;
+  windows: WindowItem[];
+  segments: Segment[];
+  hours: HourBlock[];
+  messages: Message[];
 }

@@ -13,10 +13,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agent.single_instance import ORCHESTRATOR_LOCK_PORT, InstanceLock, port_is_free
 from server.config import get_settings
-from server.db import Base, engine
+from server.db import Base, add_missing_sqlite_columns, engine
 from server.middleware import GzipAndSizeLimitMiddleware
 from server.orchestrator import run_orchestrator_tick
-from server.routes import dashboard, enroll, goals, ingest, messages
+from server.routes import admin, dashboard, enroll, goals, ingest, messages
+from server.routes import auth as auth_routes
 
 logger = logging.getLogger(__name__)
 
@@ -65,24 +66,29 @@ def create_app() -> FastAPI:
         # Local dev/test convenience only -- the Postgres production schema is
         # managed exclusively via Alembic migrations (server/alembic/).
         Base.metadata.create_all(bind=engine)
+        added = add_missing_sqlite_columns(engine, Base.metadata)
+        if added:
+            logger.info("Added missing columns to the local SQLite database: %s", ", ".join(added))
 
     app.add_middleware(GzipAndSizeLimitMiddleware, max_body_bytes=settings.max_request_bytes)
-    # dashboard/ is a separate origin (Vite dev server) with no auth/session
-    # system to piggyback on (see server/routes/dashboard.py) -- GET-only,
-    # read-only endpoints, so a permissive dev CORS policy doesn't expose any
-    # mutation. Tighten this before any real deployment.
+    # dashboard/ is a separate origin (Vite dev server). Auth is a bearer
+    # token in the Authorization header (server/dashboard_auth.py), not a
+    # cookie, so no allow_credentials is needed -- only the origins the
+    # dashboard is served from may call these endpoints from a browser.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.dashboard_origins,
-        allow_methods=["GET"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     app.include_router(ingest.router)
     app.include_router(enroll.router)
     app.include_router(messages.router)
     app.include_router(goals.router)
+    app.include_router(auth_routes.router)
     app.include_router(dashboard.router)
+    app.include_router(admin.router)
 
     return app
 
