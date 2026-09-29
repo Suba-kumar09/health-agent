@@ -68,7 +68,8 @@ the server has no other way to know a retry is "the same" data.
   (detailed mode adds `key_codes: [str]`)
 - `window_watcher`: `{app, title}` (event `duration` is heartbeat-extended
   while the same window stays foreground; see `agent/collectors/coalescing.py`)
-- `afk`: `{state: "active" | "afk"}` (also heartbeat-extended)
+- `afk`: `{state: "active" | "afk" | "locked"}` (also heartbeat-extended; `locked` = the
+  workstation is locked)
 - `browser_bridge`: `{url, title}`
 
 ## POST /v1/enroll
@@ -98,20 +99,37 @@ Response 200: {"messages": [{"message_id": "...", "text": "...", "created_at": 1
 Response 401: -- auth failed
 ```
 
-LLM-generated wellbeing "intimate messages" (Phase-2 addition), queued server-side and
-delivered to the owning device on poll. Server implementation: `server/routes/messages.py`
-(auth via the same `resolve_device_dependency` as `/v1/ingest`) + `server/wellbeing.py`
-(generation) + `server/main.py`'s `run_wellbeing_tick` (an APScheduler job, same library the
-agent uses, started from `create_app()`'s lifespan). Each returned message is marked delivered
-in the same request that returns it -- at-most-once, not durable-retry like `/v1/ingest`, since
-a missed notification is a UX gap, not a correctness bug.
+LLM-generated wellbeing reminders, queued server-side and delivered to the owning device on
+poll. Server implementation: `server/routes/messages.py` (auth via the same
+`resolve_device_dependency` as `/v1/ingest`). Messages are created by the orchestrator
+(`server/orchestrator.py`, an APScheduler job started from `create_app()`'s lifespan), which
+each tick picks at most one generator per device -- distraction (`server/goals.py`) > idle
+(`server/productivity.py`) > break (`server/wellbeing.py`) -- and gates it through
+`server/policy.py` (cooldown, daily limit, quiet hours) and a "no recent un-shown message"
+check.
+
+**Fetching does not mark a message delivered.** It stays in `pending` until the device acks it
+(below), so a popup that failed to show is simply returned again on the next poll
+(at-least-once delivery).
+
+## POST /v1/messages/ack
+
+```
+Headers: Authorization: Bearer <device_token>
+Body:    {"message_ids": ["...", ...]}
+Response 200: {"acknowledged": <number newly marked delivered>}
+Response 401: -- auth failed
+```
+
+Marks the given messages delivered. Scoped to the caller's own device and idempotent: unknown
+ids, another device's ids, and already-delivered ids are ignored (counted as 0), so a retried
+ack is safe.
 
 Client implementation: `agent.sync.messages.MessagesPoller`, polled on an APScheduler interval
-(`agent.messages_poll_interval_secs`, default 300s) from `agent/main.py`, same
-`token_provider`/`http_client` wiring as `Uploader`. Each message's `text` is handed to
-`TrayController.show_message()`, which surfaces it as a native OS notification via
-`pystray`'s `icon.notify()` (falls back to a log line with `--no-tray` or on backends that
-don't support `notify()`).
+(`agent.messages_poll_interval_secs`) from `agent/main.py`, same `token_provider`/`http_client`
+wiring as `Uploader`. Each message's `text` goes to `TrayController.show_message()` (a WinRT
+toast, falling back to the tray balloon); only messages it reports as shown are acked. A message
+already shown whose ack failed is re-acked on the next poll, never shown twice.
 
 Server-side generation (`server/wellbeing.py`): each tick, for every enrolled device,
 `continuous_active_streak()` sums that device's `afk` events backward from the most recent one
@@ -119,17 +137,16 @@ until it hits a `state="afk"` (idle) row -- this is the device's current unbroke
 streak, in seconds (summed across however many rows it's split into at sync-interval
 boundaries; see `agent/collectors/coalescing.py`'s `extend_duration` gate). If that streak is
 still `state="afk"` (they're currently idle) or hasn't yet reached `WELLBEING_BREAK_THRESHOLD_SECS`
-(default 1800s/30min), nothing happens that tick. Once it crosses the threshold, a message is
+(code default 60s, a test-friendly value -- set e.g. 1800 for a real 30-minute rule), nothing happens that tick. Once it crosses the threshold, a message is
 generated *once* for that streak (tracked by comparing the streak's start timestamp against the
 device's last-sent message) -- the streak has to break (a fresh `afk` idle event) and cross the
 threshold again before another message is sent, so it isn't repeated every tick while someone
-keeps working. The prompt asks a local Ollama instance (`OLLAMA_URL`, default
-`http://127.0.0.1:11434`; `WELLBEING_MODEL`, default `qwen2.5:3b`) for one concrete, actionable
-sentence naming the actual minutes worked -- not vague encouragement. An unreachable/slow LLM is
-caught and logged, not fatal to the tick. Toggle the whole feature off with
-`WELLBEING_ENABLED=false`.
+keeps working. The prompt asks OpenAI (`OPENAI_API_KEY`, `OPENAI_BASE_URL`; `WELLBEING_MODEL`,
+default `gpt-4o-mini`) for one concrete, actionable sentence naming the actual minutes worked --
+not vague encouragement. An unreachable/slow LLM is caught and logged, not fatal to the tick.
+Toggle the whole feature off with `WELLBEING_ENABLED=false`.
 
-`Message.kind` (`"break"` | `"distraction"`) distinguishes which generator produced a given row
+`Message.kind` (`"break"` | `"idle"` | `"distraction"`) distinguishes which generator produced a given row
 and scopes each generator's own "don't repeat for the same streak" dedup check independently --
 a break reminder must never suppress a distraction reminder for the same device, or vice versa.
 
@@ -158,7 +175,7 @@ A second, independent message generator, delivered through the same `GET /v1/mes
 endpoint and agent-side `MessagesPoller`/tray popup as wellbeing messages above -- the agent
 needs no changes to support this, it already just displays whatever `text` it's handed.
 
-Each tick (`DISTRACTION_CHECK_INTERVAL_SECS`, default 300s), for every enrolled device,
+Each orchestrator tick (`ORCHESTRATOR_INTERVAL_SECS`, default 60s), for every enrolled device,
 `continuous_distraction_streak()` sums the device's most recent `window_watcher`/`browser_bridge`
 events backward from the latest one, for as long as each event's `title`/`url`/`app` matches a
 keyword in `DISTRACTION_KEYWORDS` (default: youtube, netflix, instagram, facebook, twitter,
@@ -171,7 +188,7 @@ walk-backward-and-sum shape (and the same large-gap-breaks-the-streak rule) as t
 tick's `continuous_active_streak()`.
 
 **A goal is never required** for a distraction reminder to fire -- once the streak crosses
-`DISTRACTION_THRESHOLD_SECS` (default 300s) and hasn't already been messaged for *this* streak,
+`DISTRACTION_THRESHOLD_SECS` (code default 60s) and hasn't already been messaged for *this* streak,
 a message always generates:
 - if the device's employee has a current goal, the prompt names the distraction, how long, the
   goal text, and minutes remaining to its deadline
@@ -181,6 +198,57 @@ Both branches call the same shared `wellbeing.call_llm(prompt, model)` helper (i
 already-built prompt string, not a hardcoded template, precisely so this module and
 `server/wellbeing.py` can share it; it reads the OpenAI API key/base URL from settings itself).
 Toggle the whole feature off with `DISTRACTION_ENABLED=false`.
+
+---
+
+# Dashboard API (people, not devices)
+
+Used by the React dashboard (`dashboard/`). Authentication is a **person's** login session,
+separate from device tokens: a device token can never read the dashboard, and a login token can
+never ingest events. Server implementation: `server/dashboard_auth.py`, `server/routes/auth.py`,
+`server/routes/dashboard.py`, `server/routes/admin.py`, shared shapes in
+`server/dashboard_views.py`. All timestamps are Unix epoch seconds; all durations are seconds.
+
+Logins are created with `python -m server.admin_cli set-login --system-name NAME [--role admin]`
+(there is no sign-up endpoint).
+
+## POST /v1/auth/login
+
+```
+Body:    {"login": "<email or system name, case-insensitive>", "password": "..."}
+Response 200: {"token": "<session token>", "account": {employee_id, name, role, email, system_name}}
+Response 401: {"detail": "That login and password don't match."}   -- same text for unknown login / wrong password / no password set
+Response 429: {"detail": "Too many failed attempts. ..."}        -- 5 failures per login name within 5 min
+```
+
+Send the token as `Authorization: Bearer <token>` on every other dashboard call. Sessions last
+`DASHBOARD_SESSION_TTL_HOURS` (default 12); only a sha256 of the token is stored.
+
+## POST /v1/auth/logout, GET /v1/auth/me
+
+`logout` deletes the session (204). `me` returns the `account` object above, or 401.
+
+## Employee endpoints (`/v1/me/*`, any logged-in employee, own data only)
+
+| Endpoint | Returns |
+|---|---|
+| `GET /v1/me/today` | `now`, `day_start`, `workday_secs`, `status` (see below), `totals` {active, distraction, idle, locked}, `segments` [{state, start_ts, end_ts, windows}], `hours` [{hour_start, totals, windows}], `apps` [{app, secs, windows}], `goal`, `messages` |
+| `GET /v1/me/week` | 7 days, oldest first: [{date, day_start, totals, top_windows, flagged_windows}] |
+| `POST /v1/me/goal` | Body `{text, hours}` -> `{text, created_at, deadline_at}` |
+
+A `window` is `{app, title, site, flag, secs}` -- `flag` is the distraction keyword it matched
+(e.g. `"youtube"`), else null. `status` is `{status, since, last_seen_at, on_screen}` where
+`status` is `active | distraction | idle | locked | offline | no_device`.
+
+## Admin endpoints (`/v1/admin/*`, role `admin` only -- 403 otherwise)
+
+| Endpoint | Returns |
+|---|---|
+| `GET /v1/admin/overview` | `kpis` {total, active, distraction, idle, offline}, `employees` [{employee_id, name, email, system_name, role, status, last_active_at, totals}], org `totals`, `trend` (24 hourly points of active seconds), `distracting_sites` [{keyword, name, secs, rows[{employee_id, employee_name, title, site, secs}]}], `messages`, `workday_secs`, `show_titles` |
+| `GET /v1/admin/employees/{employee_id}` | One employee's row fields plus `windows`, `segments`, `hours`, `messages` for today; 404 if unknown |
+
+When `ADMIN_SHOW_WINDOW_TITLES=false`, admin responses carry no window titles (`title: null`),
+no message labels, and no distraction-message text; app names and sites remain.
 
 ---
 
