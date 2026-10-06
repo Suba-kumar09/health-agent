@@ -25,3 +25,11 @@ max_batches_per_tick = 3
     assert cfg.agent.device_id == "abc"
     assert cfg.agent.capture_mode == "detailed"
     assert cfg.sync.max_batches_per_tick == 3
+
+
+def test_voice_defaults_and_overrides(tmp_path):
+    assert Config.default().voice.enabled is True
+    path = tmp_path / "config.toml"
+    path.write_text('[voice]\nenabled = false\npitch = 8\nvoice_name = "Zira"\n')
+    cfg = Config.load(path)
+    assert (cfg.voice.enabled, cfg.voice.pitch, cfg.voice.voice_name, cfg.voice.robot) == (False, 8, "Zira", True)

@@ -48,12 +48,26 @@ class PrivacySection(BaseModel):
     afk_threshold_secs: int = 120
 
 
+class VoiceSection(BaseModel):
+    """Buddy, the robot voice assistant (agent/voice.py, agent/robot.py). It only
+    speaks reminders the server sends, so it is silent unless the server is running."""
+
+    enabled: bool = True  # speak reminders aloud
+    robot: bool = True  # show the small animated robot while speaking
+    greet_on_start: bool = True  # say hello once the server first answers
+    rate: int = Field(default=1, ge=-10, le=10)  # SAPI speed, -10 (slow) .. 10 (fast)
+    pitch: int = Field(default=6, ge=-10, le=10)  # SAPI pitch; higher sounds more "robot"
+    volume: int = Field(default=90, ge=0, le=100)
+    voice_name: str = ""  # part of an installed Windows voice name, e.g. "Zira"; "" = default
+
+
 class Config(BaseModel):
     agent: AgentSection = Field(default_factory=AgentSection)
     sync: SyncSection = Field(default_factory=SyncSection)
     retention: RetentionSection = Field(default_factory=RetentionSection)
     collectors: CollectorsSection = Field(default_factory=CollectorsSection)
     privacy: PrivacySection = Field(default_factory=PrivacySection)
+    voice: VoiceSection = Field(default_factory=VoiceSection)
 
     @classmethod
     def load(cls, path: str | Path) -> Config:

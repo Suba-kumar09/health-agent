@@ -2,6 +2,8 @@
 from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = ['win32timezone']
+# Buddy's voice (agent/voice.py) imports these lazily, so PyInstaller can't see them.
+hiddenimports += ['pythoncom', 'win32com', 'win32com.client']
 hiddenimports += collect_submodules('keyring.backends')
 
 

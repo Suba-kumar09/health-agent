@@ -28,3 +28,14 @@ browser_bridge = true
 [privacy]
 encrypt_at_rest = true
 afk_threshold_secs = 120
+
+# Buddy, the robot voice assistant. Speaks the server's reminders aloud (Windows
+# built-in voice, offline) with a small animated robot. Silent unless the server runs.
+[voice]
+enabled = true
+robot = true                        # show the animated robot while speaking
+greet_on_start = true               # say hello once the server first answers
+rate = 1                            # speed, -10 (slow) .. 10 (fast)
+pitch = 6                           # -10 .. 10; higher sounds more like a robot
+volume = 90                         # 0 .. 100
+voice_name = ""                     # part of an installed voice's name, e.g. "Zira"; "" = default

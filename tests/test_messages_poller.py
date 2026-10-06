@@ -155,3 +155,40 @@ def test_failed_ack_does_not_repop_the_same_message():
 
     assert shown == ["hello", "world"]  # popped once each, not twice
     assert acks == [["m1", "m2"], ["m1", "m2"]]  # but the ack is retried
+
+
+def test_on_connected_fires_once_after_the_first_successful_poll():
+    calls = []
+    handler, _acks = _recording_handler([])
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    poller = MessagesPoller(
+        http_client=client,
+        server_url="https://ingest.test",
+        token_provider=lambda: "t",
+        on_message=lambda text: True,
+        on_connected=lambda: calls.append(1),
+    )
+
+    poller.poll_once()
+    poller.poll_once()
+
+    assert calls == [1]
+
+
+def test_on_connected_does_not_fire_while_the_server_is_down():
+    calls = []
+
+    def handler(request):
+        raise httpx.ConnectError("down", request=request)
+
+    poller = MessagesPoller(
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        server_url="https://ingest.test",
+        token_provider=lambda: "t",
+        on_message=lambda text: True,
+        on_connected=lambda: calls.append(1),
+    )
+
+    poller.poll_once()
+
+    assert calls == []

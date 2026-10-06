@@ -19,6 +19,7 @@ secrets/
 # Local run/demo artifacts -- contain real captured personal activity data,
 # never commit these regardless of what --data-dir is named.
 consent.json
+buddy.json
 detailed_mode_audit.log
 telemetry.html
 events_export.json

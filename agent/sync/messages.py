@@ -32,11 +32,16 @@ class MessagesPoller:
         server_url: str,
         token_provider: TokenProvider,
         on_message: Callable[[str], bool | None],
+        on_connected: Callable[[], None] | None = None,
     ) -> None:
         self.http_client = http_client
         self.server_url = server_url.rstrip("/")
         self.token_provider = token_provider
         self.on_message = on_message
+        # Fired once, on the first successful poll -- proof the server is up
+        # and knows this device (Buddy's greeting uses it).
+        self.on_connected = on_connected
+        self._connected = False
         self._shown_ids: set[str] = set()
 
     def poll_once(self) -> int:
@@ -53,6 +58,14 @@ class MessagesPoller:
         if resp.status_code != 200:
             logger.info("Message poll failed: HTTP %d", resp.status_code)
             return 0
+
+        if not self._connected:
+            self._connected = True
+            if self.on_connected is not None:
+                try:
+                    self.on_connected()
+                except Exception:
+                    logger.exception("on_connected callback failed")
 
         parsed = PendingMessagesResponse.model_validate(resp.json())
         to_ack: list[str] = []

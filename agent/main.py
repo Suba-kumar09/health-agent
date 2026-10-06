@@ -34,6 +34,7 @@ from agent.sync.enroll import EnrollmentError, enroll
 from agent.sync.messages import MessagesPoller
 from agent.sync.uploader import Uploader
 from agent.tray import TrayController
+from agent.voice import GREETING, create_buddy, stop_buddy
 
 logger = logging.getLogger("agent")
 
@@ -287,14 +288,21 @@ def main(argv: list[str] | None = None) -> None:
 
     stop_event = threading.Event()
 
+    # Buddy, the robot voice assistant: speaks the server's reminders aloud (None if disabled).
+    buddy = create_buddy(config.voice, state_dir=data_dir)
+
     def pause_collectors() -> None:
         for c in collectors:
             c.stop()
+        if buddy is not None:
+            buddy.paused = True
         logger.info("Collectors paused via tray")
 
     def resume_collectors() -> None:
         for c in collectors:
             c.start()
+        if buddy is not None:
+            buddy.paused = False
         logger.info("Collectors resumed via tray")
 
     def stop_from_tray() -> None:
@@ -308,6 +316,8 @@ def main(argv: list[str] | None = None) -> None:
         on_resume=resume_collectors,
         on_stop=stop_from_tray,
         capture_mode=capture_mode,
+        on_toggle_mute=buddy.toggle_mute if buddy is not None else None,
+        is_muted=(lambda: buddy.muted) if buddy is not None else None,
     )
     if not args.no_tray:
         tray.start()
@@ -343,14 +353,27 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     def on_wellbeing_message(text: str) -> bool:
+        """Each reminder pops up exactly once: by Buddy (spoken, with its bubble)
+        when Buddy is unmuted and on screen, otherwise by the Windows popup.
+        Either way it is kept in the Windows notification center to re-read."""
         logger.info("Wellbeing message: %s", text)
+        # Buddy pops out for it, and once the user closes it with ✕, hides again.
+        if buddy is not None and buddy.will_present() and buddy.say(text, tuck_away=True):
+            tray.record_message(text)  # notification-center copy, no second popup
+            return True
         return tray.show_message(text)
+
+    def greet() -> None:
+        # The start-up hello shows even when muted (then without the voice); after
+        # its ✕ Buddy tucks into the edge.
+        buddy.say(GREETING, force=True, tuck_away=True)
 
     messages_poller = MessagesPoller(
         http_client=http_client,
         server_url=config.agent.server_url,
         token_provider=lambda: device_token,
         on_message=on_wellbeing_message,
+        on_connected=greet if buddy is not None and config.voice.greet_on_start else None,
     )
 
     scheduler = BackgroundScheduler()
@@ -382,6 +405,7 @@ def main(argv: list[str] | None = None) -> None:
         for c in collectors:
             c.stop()
         tray.stop()
+        stop_buddy(buddy)
         scheduler.shutdown(wait=False)
         uploader.run_tick()  # final drain attempt before exit
         storage.close()

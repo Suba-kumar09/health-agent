@@ -27,6 +27,30 @@ def _register_windows_app_identity() -> None:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_WINDOWS_APP_USER_MODEL_ID)
     except Exception:
         logger.warning("Could not set Windows AppUserModelID; tray notifications may not appear", exc_info=True)
+    _register_app_display_name()
+
+
+_APP_DISPLAY_NAME = "Health Agent"
+_registered_display_name = False
+
+
+def _register_app_display_name() -> None:
+    """Registers the AppUserModelID with Windows for the current user
+    (HKCU\\Software\\Classes\\AppUserModelId\\<id>, no admin needed), so toasts and
+    the notification center list them as "Health Agent" instead of the raw id.
+    Once per process; never raises."""
+    global _registered_display_name
+    if _registered_display_name or platform.system() != "Windows":
+        return
+    _registered_display_name = True
+    try:
+        import winreg
+
+        key_path = rf"Software\Classes\AppUserModelId\{_WINDOWS_APP_USER_MODEL_ID}"
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, _APP_DISPLAY_NAME)
+    except Exception:
+        logger.warning("Could not register the Health Agent name with Windows notifications", exc_info=True)
 
 
 class TrayController:
@@ -42,11 +66,16 @@ class TrayController:
         on_resume: Callable[[], None],
         on_stop: Callable[[], None],
         capture_mode: str,
+        on_toggle_mute: Callable[[], None] | None = None,
+        is_muted: Callable[[], bool] | None = None,
     ) -> None:
         self.on_pause = on_pause
         self.on_resume = on_resume
         self.on_stop = on_stop
         self.capture_mode = capture_mode
+        # Buddy's voice (agent/voice.py); the menu item only appears when set.
+        self.on_toggle_mute = on_toggle_mute
+        self.is_muted = is_muted or (lambda: False)
         self.paused = False
         self._icon = None
         self._thread: threading.Thread | None = None
@@ -78,11 +107,19 @@ class TrayController:
             self.on_stop()
             icon.stop()
 
-        menu = pystray.Menu(
-            pystray.MenuItem(lambda item: "Resume" if self.paused else "Pause", toggle_pause),
+        def toggle_mute(icon, item):
+            self.on_toggle_mute()
+            icon.update_menu()
+
+        items = [pystray.MenuItem(lambda item: "Resume" if self.paused else "Pause", toggle_pause)]
+        if self.on_toggle_mute is not None:
+            mute_label = lambda item: "Unmute Buddy" if self.is_muted() else "Mute Buddy"  # noqa: E731
+            items.append(pystray.MenuItem(mute_label, toggle_mute))
+        items += [
             pystray.MenuItem(f"Capture mode: {self.capture_mode}", None, enabled=False),
             pystray.MenuItem("Stop agent", stop),
-        )
+        ]
+        menu = pystray.Menu(*items)
         return pystray.Icon("health-agent", self._image_running, "Health Agent", menu)
 
     def start(self) -> None:
@@ -138,8 +175,19 @@ class TrayController:
             logger.exception("Failed to show wellbeing notification: %s", text)
             return False
 
-    def _show_windows_toast(self, text: str) -> bool:
-        """Tries to show `text` as a real WinRT Toast notification. Returns
+    def record_message(self, text: str) -> bool:
+        """Files `text` in the Windows notification center *without* a popup on
+        screen -- used when Buddy has already shown and spoken the reminder, so
+        it can still be re-read later from the taskbar's notification list.
+        Returns False where that isn't possible (non-Windows, no windows-toasts);
+        never raises."""
+        if platform.system() != "Windows":
+            return False
+        return self._show_windows_toast(text, quiet=True)
+
+    def _show_windows_toast(self, text: str, quiet: bool = False) -> bool:
+        """Tries to show `text` as a real WinRT Toast notification (`quiet`:
+        straight into the notification center, no popup). Returns
         True on success (caller should not also fall back to the balloon
         tip), False if windows-toasts isn't installed or the call failed for
         any other reason -- never raises, so show_message can always safely
@@ -156,6 +204,7 @@ class TrayController:
             toast = Toast()
             toast.text_fields = [text]
             toast.attribution_text = "Health Agent"
+            toast.suppress_popup = quiet
             toaster.show_toast(toast)
             return True
         except ImportError:
