@@ -9,53 +9,32 @@ from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
-from sqlalchemy import select
 
 from server.config import get_settings
-from server.db import Base, engine, session_scope
+from server.db import Base, engine
 from server.middleware import GzipAndSizeLimitMiddleware
-from server.models import Device
-from server.routes import enroll, ingest, messages
-from server.wellbeing import generate_for_device
+from server.orchestrator import run_orchestrator_tick
+from server.routes import enroll, goals, ingest, messages
 
 logger = logging.getLogger(__name__)
-
-
-def run_wellbeing_tick() -> None:
-    """One pass over all enrolled devices, generating a new wellbeing message
-    for any with fresh activity since their last one. Runs on the background
-    scheduler started in `lifespan` -- a slow/unreachable LLM or a bad device
-    must not take down the tick for the rest, hence the per-device try/except.
-    """
-    settings = get_settings()
-    with session_scope() as session:
-        devices = session.execute(select(Device)).scalars().all()
-        for device in devices:
-            try:
-                generate_for_device(
-                    session,
-                    device,
-                    settings.ollama_url,
-                    settings.wellbeing_model,
-                    settings.wellbeing_break_threshold_secs,
-                )
-            except Exception:
-                logger.exception("Wellbeing tick failed for device %s", device.device_id)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     scheduler = None
-    if settings.wellbeing_enabled:
+    if settings.wellbeing_enabled or settings.distraction_enabled or settings.productivity_enabled:
         scheduler = BackgroundScheduler()
-        scheduler.add_job(run_wellbeing_tick, "interval", seconds=settings.wellbeing_interval_secs)
-        scheduler.start()
+        scheduler.add_job(run_orchestrator_tick, "interval", seconds=settings.orchestrator_interval_secs)
         logger.info(
-            "Wellbeing scheduler started (every %ds, model=%s)",
-            settings.wellbeing_interval_secs,
+            "Orchestrator scheduler started (every %ds; break=%s distraction=%s idle=%s, model=%s)",
+            settings.orchestrator_interval_secs,
+            settings.wellbeing_enabled,
+            settings.distraction_enabled,
+            settings.productivity_enabled,
             settings.wellbeing_model,
         )
+        scheduler.start()
     yield
     if scheduler is not None:
         scheduler.shutdown(wait=False)
@@ -75,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(ingest.router)
     app.include_router(enroll.router)
     app.include_router(messages.router)
+    app.include_router(goals.router)
 
     return app
 

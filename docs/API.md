@@ -129,6 +129,53 @@ sentence naming the actual minutes worked -- not vague encouragement. An unreach
 caught and logged, not fatal to the tick. Toggle the whole feature off with
 `WELLBEING_ENABLED=false`.
 
+`Message.kind` (`"break"` | `"distraction"`) distinguishes which generator produced a given row
+and scopes each generator's own "don't repeat for the same streak" dedup check independently --
+a break reminder must never suppress a distraction reminder for the same device, or vice versa.
+
+## GET /goal, POST /goal
+
+Not part of the device wire contract -- a small human-facing HTML form (no device auth), served
+by the same FastAPI app, for an employee to record today's goal. Server implementation:
+`server/routes/goals.py`.
+
+```
+GET /goal            -> HTML form: system name, goal text, hours to complete
+POST /goal (form-encoded: system_name, text, hours)
+  -> 200 HTML confirmation, on success
+  -> 200 HTML error page, if system_name isn't a registered employee machine
+     (same `resolve_employee_by_system_name()` lookup used at enrollment, server/auth.py)
+```
+
+Submitting a goal inserts a new `Goal` row (`employee_id`, `text`, `deadline_at`, `created_at`);
+there's no edit/complete flow yet (MVP scope) -- "current goal" for an employee is just their
+latest `Goal` row whose `deadline_at` is still in the future (`server/goals.py`'s
+`current_goal()`).
+
+### Distraction reminders (`server/goals.py`)
+
+A second, independent message generator, delivered through the same `GET /v1/messages/pending`
+endpoint and agent-side `MessagesPoller`/tray popup as wellbeing messages above -- the agent
+needs no changes to support this, it already just displays whatever `text` it's handed.
+
+Each tick (`DISTRACTION_CHECK_INTERVAL_SECS`, default 300s), for every enrolled device,
+`continuous_distraction_streak()` sums the device's most recent `window_watcher`/`browser_bridge`
+events backward from the latest one, for as long as each event's `title`/`url`/`app` matches a
+keyword in `DISTRACTION_KEYWORDS` (default: youtube, netflix, instagram, facebook, twitter,
+tiktok, twitch, reddit, hotstar, prime video) -- same walk-backward-and-sum shape (and the same
+large-gap-breaks-the-streak rule) as the wellbeing tick's `continuous_active_streak()`.
+
+**A goal is never required** for a distraction reminder to fire -- once the streak crosses
+`DISTRACTION_THRESHOLD_SECS` (default 300s) and hasn't already been messaged for *this* streak,
+a message always generates:
+- if the device's employee has a current goal, the prompt names the distraction, how long, the
+  goal text, and minutes remaining to its deadline
+- if not, the prompt just names the distraction and how long, with no task/deadline framing
+
+Both branches call the same shared `wellbeing.call_llm(prompt, ollama_url, model)` helper (it
+takes an already-built prompt string, not a hardcoded template, precisely so this module and
+`server/wellbeing.py` can share it). Toggle the whole feature off with `DISTRACTION_ENABLED=false`.
+
 ---
 
 # Browser bridge (agent <-> companion extension)

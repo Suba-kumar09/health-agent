@@ -71,6 +71,37 @@ def test_none_info_clears_current_state_without_creating_event():
     assert len(events) == 2
 
 
+def test_extend_failure_starts_fresh_event_without_losing_the_state():
+    """A frozen row (extend_duration returns False, e.g. already synced by an
+    in-flight batch) must not silently swallow further duration for a state
+    that's still ongoing -- a new event should start in its place."""
+    events = []
+    extend_results = iter([True, False, True])
+
+    def on_new_state(info, ts):
+        event_id = f"evt-{len(events)}"
+        events.append((event_id, info, ts))
+        return event_id
+
+    def on_extend(event_id, duration):
+        return next(extend_results)
+
+    poller = CoalescingStatePoller(
+        state_key_fn=lambda info: info.get("k") if info else None,
+        on_new_state=on_new_state,
+        on_extend=on_extend,
+    )
+
+    poller.poll({"k": "a"}, now=100.0)  # creates evt-0
+    poller.poll({"k": "a"}, now=105.0)  # extend succeeds
+    poller.poll({"k": "a"}, now=110.0)  # extend fails (row frozen) -> fresh event
+    poller.poll({"k": "a"}, now=115.0)  # extend succeeds on the fresh event
+
+    assert len(events) == 2
+    assert events[1][1] == {"k": "a"}
+    assert events[1][2] == 110.0
+
+
 def test_frozen_row_starts_a_fresh_event_instead_of_going_dark():
     # Simulates a batch upload claiming the current row mid-streak (see
     # Storage.extend_duration's synced=0/batch_id IS NULL guard): on_extend

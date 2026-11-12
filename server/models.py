@@ -74,11 +74,16 @@ class RateLimitCounter(Base):
 
 
 class Message(Base):
-    """LLM-generated wellbeing message for a device, queued for delivery.
+    """LLM-generated message for a device, queued for delivery.
 
     `created_at` also doubles as the high-water mark for how far back the next
-    generation tick needs to summarize (see server/wellbeing.py) -- a device's
-    most recent Message row is "last time we told them something."
+    generation tick needs to summarize (see server/wellbeing.py, server/goals.py)
+    -- a device's most recent Message row of a given `kind` is "last time we
+    told them something about this specific concern."
+
+    `kind` ("break" | "distraction") keeps the two generators' dedup checks
+    independent -- a break reminder must not suppress a distraction reminder
+    or vice versa, since they track unrelated streaks.
     """
 
     __tablename__ = "messages"
@@ -87,5 +92,24 @@ class Message(Base):
     message_id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     device_id: Mapped[str] = mapped_column(String, ForeignKey("devices.device_id"), nullable=False)
     text: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, default="break", server_default="break")
     created_at: Mapped[float] = mapped_column(Float, default=time.time)
     delivered_at: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class Goal(Base):
+    """An employee-stated goal/deadline, submitted via the GET/POST /goal form.
+
+    Deliberately no "completed" flag or edit flow for now (MVP scope) --
+    "current goal" for an employee is just their latest row with
+    `deadline_at` still in the future (see server/goals.py's current_goal()).
+    """
+
+    __tablename__ = "goals"
+    __table_args__ = (Index("ix_goals_employee_id_created_at", "employee_id", "created_at"),)
+
+    goal_id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    employee_id: Mapped[str] = mapped_column(String, ForeignKey("employees.employee_id"), nullable=False)
+    text: Mapped[str] = mapped_column(String, nullable=False)
+    deadline_at: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[float] = mapped_column(Float, default=time.time)

@@ -77,12 +77,15 @@ def continuous_active_streak(session: Session, device_id: str) -> tuple[float, f
     return total, streak_start_ts
 
 
-def call_llm(minutes: float, ollama_url: str, model: str, timeout: float = 30.0) -> str:
+def call_llm(prompt: str, ollama_url: str, model: str, timeout: float = 30.0) -> str:
+    """Shared Ollama call used by both this module and server/goals.py --
+    takes an already-built prompt string so each generator owns its own
+    prompt template without duplicating the HTTP-call plumbing."""
     resp = httpx.post(
         f"{ollama_url.rstrip('/')}/api/chat",
         json={
             "model": model,
-            "messages": [{"role": "user", "content": _PROMPT_TEMPLATE.format(minutes=minutes)}],
+            "messages": [{"role": "user", "content": prompt}],
             "stream": False,
         },
         timeout=timeout,
@@ -114,7 +117,9 @@ def generate_for_device(
 
     last_message = (
         session.execute(
-            select(Message).where(Message.device_id == device.device_id).order_by(Message.created_at.desc())
+            select(Message)
+            .where(Message.device_id == device.device_id, Message.kind == "break")
+            .order_by(Message.created_at.desc())
         )
         .scalars()
         .first()
@@ -123,12 +128,12 @@ def generate_for_device(
         return None  # already notified for this streak
 
     try:
-        text = call_llm(total_secs / 60, ollama_url, model)
+        text = call_llm(_PROMPT_TEMPLATE.format(minutes=total_secs / 60), ollama_url, model)
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         logger.warning("Wellbeing message generation failed for device %s: %s", device.device_id, exc)
         return None
 
-    message = Message(device_id=device.device_id, text=text)
+    message = Message(device_id=device.device_id, text=text, kind="break")
     session.add(message)
     session.flush()
     return message

@@ -1,10 +1,30 @@
 from __future__ import annotations
 
 import logging
+import platform
 import threading
 from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+_WINDOWS_APP_USER_MODEL_ID = "HealthAgent.WellbeingAgent"
+
+
+def _register_windows_app_identity() -> None:
+    """Without an explicit AppUserModelID, Windows can silently drop a
+    Shell_NotifyIcon toast/balloon from an unpackaged python.exe/pythonw.exe
+    process -- no exception raised, nothing in Action Center, just nothing.
+    Setting one is the standard fix; it must happen before the tray icon
+    (and therefore any notify() call) is created, so this runs at the start
+    of TrayController.start() rather than lazily inside show_message()."""
+    if platform.system() != "Windows":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(_WINDOWS_APP_USER_MODEL_ID)
+    except Exception:
+        logger.warning("Could not set Windows AppUserModelID; tray notifications may not appear", exc_info=True)
 
 
 class TrayController:
@@ -90,6 +110,7 @@ class TrayController:
         return pystray.Icon("health-agent", self._image_running, "Health Agent", menu)
 
     def start(self) -> None:
+        _register_windows_app_identity()
         try:
             self._icon = self._build_icon()
         except Exception as exc:  # pragma: no cover - environment-dependent (no tray/display)
@@ -115,3 +136,10 @@ class TrayController:
             self._icon.notify(text, "Health Agent")
         except NotImplementedError:  # pragma: no cover - not every backend supports notify()
             logger.info("Wellbeing message (notify unsupported): %s", text)
+        except Exception:
+            # notify() reaching the OS shell call doesn't guarantee a toast
+            # actually appears (Focus Assist / per-app notification settings
+            # can suppress it with no error at all) -- but if the shell call
+            # itself throws, that's a real bug and was previously swallowed
+            # silently here, making this exact failure mode undiagnosable.
+            logger.exception("Failed to show wellbeing notification: %s", text)
