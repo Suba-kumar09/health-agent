@@ -111,6 +111,120 @@ def test_tab_event_with_valid_token_dispatches_to_callback(bridge):
     assert bridge.events == [{"url": "https://example.com", "title": "Example", "ts": 1.0}]
 
 
+def test_reissuing_pairing_code_invalidates_the_previous_one(bridge):
+    """issue_pairing_code() is callable on demand (not just at start()) -- this is
+    what the tray's "Pair browser extension..." menu item calls."""
+    old_code = bridge.issue_pairing_code()
+    new_code = bridge.issue_pairing_code()
+
+    assert new_code != old_code
+
+    old_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": old_code}, headers={"Origin": EXT_ORIGIN})
+    assert old_resp.status_code == 401
+
+    new_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": new_code}, headers={"Origin": EXT_ORIGIN})
+    assert new_resp.status_code == 200
+
+
+def test_unpair_invalidates_the_current_token(bridge):
+    code = bridge.issue_pairing_code()
+    pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+    token = pair_resp.json()["token"]
+
+    bridge.unpair()
+
+    assert bridge.paired_token is None
+    resp = httpx.post(
+        f"{base_url(bridge)}/tab-event",
+        json={"url": "https://example.com", "title": "Example", "ts": 1.0},
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 401
+    assert bridge.events == []
+
+
+def test_unpair_then_repair_issues_a_working_token(bridge):
+    code = bridge.issue_pairing_code()
+    httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+
+    bridge.unpair()
+
+    new_code = bridge.issue_pairing_code()
+    pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": new_code}, headers={"Origin": EXT_ORIGIN})
+    assert pair_resp.status_code == 200
+    new_token = pair_resp.json()["token"]
+
+    resp = httpx.post(
+        f"{base_url(bridge)}/tab-event",
+        json={"url": "https://example.com", "title": "Example", "ts": 1.0},
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {new_token}"},
+    )
+    assert resp.status_code == 200
+
+
+def test_unpair_endpoint_requires_valid_token(bridge):
+    resp = httpx.post(
+        f"{base_url(bridge)}/unpair",
+        headers={"Origin": EXT_ORIGIN, "Authorization": "Bearer wrong-token"},
+    )
+
+    assert resp.status_code == 401
+
+
+def test_unpair_endpoint_invalidates_token_and_requires_origin(bridge):
+    code = bridge.issue_pairing_code()
+    pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+    token = pair_resp.json()["token"]
+
+    # Wrong origin, even with a valid token -- still rejected (independent layers).
+    bad_origin_resp = httpx.post(
+        f"{base_url(bridge)}/unpair",
+        headers={"Origin": "https://evil.example", "Authorization": f"Bearer {token}"},
+    )
+    assert bad_origin_resp.status_code == 403
+    assert bridge.paired_token == token  # unchanged -- the bad-origin call must not have run
+
+    resp = httpx.post(
+        f"{base_url(bridge)}/unpair",
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert bridge.paired_token is None
+
+    # The now-invalidated token must be rejected on /tab-event.
+    tab_event_resp = httpx.post(
+        f"{base_url(bridge)}/tab-event",
+        json={"url": "https://example.com", "title": "Example", "ts": 1.0},
+        headers={"Origin": EXT_ORIGIN, "Authorization": f"Bearer {token}"},
+    )
+    assert tab_event_resp.status_code == 401
+def test_options_preflight_from_extension_origin_succeeds(bridge):
+    """A real browser's fetch() with a JSON body triggers this CORS preflight
+    before the actual POST -- curl/httpx (used by every other test here) don't
+    enforce CORS, so this is the one path that catches a browser blocking the
+    request even when the server-side pairing logic itself is correct."""
+    resp = httpx.request("OPTIONS", f"{base_url(bridge)}/pair", headers={"Origin": EXT_ORIGIN})
+
+    assert resp.status_code == 204
+    assert resp.headers["access-control-allow-origin"] == EXT_ORIGIN
+    assert resp.headers["access-control-allow-methods"] == "POST"
+
+
+def test_options_preflight_rejected_from_non_extension_origin(bridge):
+    resp = httpx.request("OPTIONS", f"{base_url(bridge)}/pair", headers={"Origin": "https://evil.example"})
+
+    assert resp.status_code == 403
+    assert "access-control-allow-origin" not in resp.headers
+
+
+def test_pair_response_includes_cors_header_for_extension_origin(bridge):
+    code = bridge.issue_pairing_code()
+
+    resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})
+
+    assert resp.headers["access-control-allow-origin"] == EXT_ORIGIN
+
+
 def test_tab_event_rejected_from_non_extension_origin_even_with_valid_token(bridge):
     code = bridge.issue_pairing_code()
     pair_resp = httpx.post(f"{base_url(bridge)}/pair", json={"code": code}, headers={"Origin": EXT_ORIGIN})

@@ -1,3 +1,5 @@
+import time
+
 from agent.collectors.afk import AfkCollector
 
 
@@ -64,3 +66,34 @@ def test_returns_to_active_when_input_resumes_after_afk():
     afk.poll_once(now=1305.0)  # active again
 
     assert [s[1] for s in new_states] == ["active", "afk", "active"]
+
+
+def test_poll_loop_survives_a_failing_poll():
+    # Regression test: an unhandled exception in poll_once() used to kill the
+    # daemon polling thread silently, forever -- no crash, no log, and every
+    # *other* collector kept running fine, which is exactly what made this so
+    # hard to spot live. One real failing poll should not stop later ones.
+    poll_count = {"n": 0}
+
+    def flaky_get_last_activity_ts():
+        poll_count["n"] += 1
+        if poll_count["n"] == 1:
+            raise RuntimeError("simulated poll failure")
+        return time.time()
+
+    afk = AfkCollector(
+        get_last_activity_ts=flaky_get_last_activity_ts,
+        on_new_state=lambda info, ts: "evt-0",
+        on_extend=lambda event_id, duration: True,
+        poll_interval_secs=0.01,
+    )
+
+    afk.start()
+    try:
+        deadline = time.time() + 2.0
+        while poll_count["n"] < 3 and time.time() < deadline:
+            time.sleep(0.01)
+    finally:
+        afk.stop()
+
+    assert poll_count["n"] >= 3

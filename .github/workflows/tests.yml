@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [main, notification]
+    branches: [development, main]
   pull_request:
 
 jobs:
@@ -27,3 +27,28 @@ jobs:
 
       - name: Test (pytest)
         run: pytest -q
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Build with PyInstaller
+        run: pyinstaller health-agent.spec
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: health-agent-${{ matrix.os }}
+          path: dist/

@@ -32,12 +32,19 @@ class CoalescingStatePoller:
         key = self.state_key_fn(info)
 
         if key == self._current_key and self._current_event_id is not None:
-            if self.on_extend(self._current_event_id, now - self._current_start):
+            extended = self.on_extend(self._current_event_id, now - self._current_start)
+            if extended:
                 return
-            # The row was already synced/claimed by an in-flight batch and is
-            # now frozen (Storage.extend_duration returned False) -- the
-            # real-world state hasn't actually changed, so start a fresh
-            # event instead of silently losing all further duration for it.
+            # The row got frozen by an in-flight batch upload (see
+            # Storage.extend_duration's synced=0/batch_id IS NULL guard) --
+            # the state itself hasn't changed, but without minting a fresh
+            # event here, a long-unbroken streak would silently stop growing
+            # from the server's perspective the moment the first batch caught
+            # it, forever, since this same key never triggers the "state
+            # changed" branch below on its own.
+            self._current_start = now
+            self._current_event_id = self.on_new_state(info, now)
+            return
 
         self._current_key = key
         self._current_start = now

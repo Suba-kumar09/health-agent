@@ -73,6 +73,15 @@ class BrowserBridgeCollector(Collector):
         logger.info("Browser extension pairing code: %s (expires in %ds)", self._pairing_code, PAIRING_CODE_TTL_SECS)
         return self._pairing_code
 
+    def unpair(self) -> None:
+        """Clears the paired bearer token, invalidating any already-paired extension
+
+        installs -- they'll get 401s on /tab-event until a new pairing code is
+        issued and the extension re-pairs.
+        """
+        self.secret_store.delete("browser_bridge_token")
+        logger.info("Browser extension unpaired -- previous token invalidated")
+
     def _consume_pairing_code(self, code: str) -> bool:
         if self._pairing_code is None or self.now_fn() > self._pairing_expires_at:
             return False
@@ -102,8 +111,30 @@ class BrowserBridgeCollector(Collector):
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
+                # A same-origin curl/httpx call never needs this, but a real
+                # browser extension's fetch() is cross-origin (chrome-extension://
+                # -> http://127.0.0.1:port) and silently discards the response
+                # without it -- reflecting the already-validated Origin (never "*")
+                # keeps this consistent with the Origin-allowlist model above.
+                if self._origin_allowed():
+                    self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", ""))
                 self.end_headers()
                 self.wfile.write(body)
+
+            def do_OPTIONS(self):  # noqa: N802 (stdlib handler naming)
+                # CORS preflight: POST with a JSON body isn't a "simple request",
+                # so browsers send this before every real POST above. Without a
+                # response here, the browser never even attempts the POST --
+                # curl/httpx don't enforce CORS, which is why they never hit this.
+                if not self._origin_allowed():
+                    self._send_json(403, {"error": "origin_not_allowed"})
+                    return
+                self.send_response(204)
+                self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", ""))
+                self.send_header("Access-Control-Allow-Methods", "POST")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
 
             def do_POST(self):  # noqa: N802 (stdlib handler naming)
                 if not self._origin_allowed():
@@ -127,7 +158,7 @@ class BrowserBridgeCollector(Collector):
                 if self.path == "/tab-event":
                     auth = self.headers.get("Authorization", "")
                     expected = collector.paired_token
-                    if not expected or auth != f"Bearer {expected}":
+                    if not expected or not secrets.compare_digest(auth, f"Bearer {expected}"):
                         self._send_json(401, {"error": "auth_failed"})
                         return
                     try:
@@ -136,6 +167,18 @@ class BrowserBridgeCollector(Collector):
                         self._send_json(400, {"error": "bad_request"})
                         return
                     collector.on_tab_event(body)
+                    self._send_json(200, {"ok": True})
+                    return
+
+                if self.path == "/unpair":
+                    # Requires the current token, same as /tab-event -- an unauthenticated
+                    # caller (or an unrelated web page) must not be able to force an unpair.
+                    auth = self.headers.get("Authorization", "")
+                    expected = collector.paired_token
+                    if not expected or not secrets.compare_digest(auth, f"Bearer {expected}"):
+                        self._send_json(401, {"error": "auth_failed"})
+                        return
+                    collector.unpair()
                     self._send_json(200, {"ok": True})
                     return
 
